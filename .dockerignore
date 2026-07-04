@@ -1,0 +1,41 @@
+# Node
+web/node_modules/
+web/dist/
+web/tsconfig.tsbuildinfo
+web/frontend_out.log
+
+# Go build artifacts
+routerhub
+routerhub.exe
+routerhub.exe~
+
+# Local database (root-level after Docker refactor)
+routerhub.db*
+data/
+
+# Local overrides
+config.yaml
+
+# Frontend embed (rebuilt inside the Docker stage)
+internal/webui/dist/*
+!internal/webui/dist/.gitkeep
+
+# Logs
+*.log
+
+# Git & CI
+.git
+.gitignore
+.github
+
+# Plans / docs / notes we don't want in the build context
+.plans
+
+# Editor
+.vscode
+.idea
+
+# Docker meta files themselves
+Dockerfile
+docker-compose.yml
+.dockerignore

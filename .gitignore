@@ -1,0 +1,43 @@
+# Plans (local iteration notes)
+.plans/
+
+# Node
+web/node_modules/
+web/dist/
+web/tsconfig.tsbuildinfo
+web/frontend_out.log
+
+# Embed dist (built files are copied here by build script)
+internal/webui/dist/*
+!internal/webui/dist/.gitkeep
+
+# Database (root path after Docker refactor; data/ kept for backwards compat)
+routerhub.db*
+data/*.db*
+data/*.db-journal
+data/*.db-wal
+data/*.db-shm
+
+# Build
+/routerhub.exe
+/routerhub.exe~
+/routerhub
+
+# Local config (only config.example.yaml is tracked)
+config.yaml
+
+# Logs
+*.log
+server_err.log
+server_out.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
