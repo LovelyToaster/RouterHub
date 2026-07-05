@@ -1,3 +1,8 @@
+# Docker workflow：为 push main 与 tag v* 构建并推送多架构镜像。
+# - 多架构：linux/amd64 + linux/arm64（通过 QEMU 交叉构建）
+# - 标签  ：latest（默认分支）、语义化版本（tag v*）、sha-<short>
+# - 缓存  ：type=gha 复用层缓存加速构建
+# 需在仓库 Secrets 配置 DOCKERHUB_USERNAME / DOCKERHUB_TOKEN。
 name: Build & Push Docker Image
 
 on:
