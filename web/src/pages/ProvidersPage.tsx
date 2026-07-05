@@ -51,6 +51,7 @@ interface TempModel {
   id: string
   model_name: string
   enabled: boolean
+  source: 'manual' | 'upstream'
 }
 
 let tempIdCounter = 0
@@ -107,17 +108,35 @@ function ProviderFormModal({
         hide_original_models: false,
       }),
     onSuccess: async (createdProvider) => {
-      // Batch import temp models
+      // Batch import temp models, split by source
       if (tempModels.length > 0) {
-        try {
-          await importProviderModels(createdProvider.id, {
-            models: tempModels.map((m) => ({
-              model_name: m.model_name,
-              enabled: m.enabled,
-            })),
-          })
-        } catch {
-          // non-fatal: models may partially import
+        // Manual models: one API call each, parallel
+        const manualModels = tempModels.filter((m) => m.source === 'manual')
+        if (manualModels.length > 0) {
+          try {
+            await Promise.all(
+              manualModels.map((m) =>
+                createProviderModel(createdProvider.id, { model_name: m.model_name }),
+              ),
+            )
+          } catch {
+            // non-fatal: models may partially import
+          }
+        }
+
+        // Upstream models: single bulk import call
+        const upstreamModels = tempModels.filter((m) => m.source === 'upstream')
+        if (upstreamModels.length > 0) {
+          try {
+            await importProviderModels(createdProvider.id, {
+              models: upstreamModels.map((m) => ({
+                model_name: m.model_name,
+                enabled: m.enabled,
+              })),
+            })
+          } catch {
+            // non-fatal: models may partially import
+          }
         }
       }
       queryClient.invalidateQueries({ queryKey: ['providers'] })
@@ -182,7 +201,7 @@ function ProviderFormModal({
     if (tempModels.some((m) => m.model_name === modelName)) return
     setTempModels((prev) => [
       ...prev,
-      { id: nextTempId(), model_name: modelName, enabled: true },
+      { id: nextTempId(), model_name: modelName, enabled: true, source: 'manual' },
     ])
     setNewModelName('')
   }
@@ -196,7 +215,7 @@ function ProviderFormModal({
       const existingNames = new Set(prev.map((m) => m.model_name))
       const newOnes = models
         .filter((name) => !existingNames.has(name))
-        .map((name) => ({ id: nextTempId(), model_name: name, enabled: true }))
+        .map((name) => ({ id: nextTempId(), model_name: name, enabled: true, source: 'upstream' as const }))
       return [...prev, ...newOnes]
     })
   }
@@ -316,10 +335,12 @@ function ProviderFormModal({
                     {modelList.map((model) => {
                       const pm = model as ProviderModel
                       const tm = model as TempModel
-                      const isPersisted = 'source' in pm
+                      const isPersisted = 'provider_id' in pm
                       const modelId = isPersisted ? pm.id : tm.id
                       const modelName = isPersisted ? pm.model_name : tm.model_name
-                      const isManual = !isPersisted || pm.source === 'manual'
+                      const isManual = isPersisted
+                        ? pm.source === 'manual'
+                        : tm.source === 'manual'
                       return (
                         <span
                           key={modelId}
