@@ -83,6 +83,11 @@ func convertChatResponseToAnthropic(resp map[string]any) map[string]any {
 		if v := getFloat64(usage, "completion_tokens"); v > 0 {
 			anthropicUsage["output_tokens"] = int64(v)
 		}
+		if details := getMap(usage, "prompt_tokens_details"); details != nil {
+			if v := getFloat64(details, "cached_tokens"); v > 0 {
+				anthropicUsage["cache_read_input_tokens"] = int64(v)
+			}
+		}
 		if len(anthropicUsage) > 0 {
 			out["usage"] = anthropicUsage
 		}
@@ -178,6 +183,11 @@ func convertAnthropicResponseToChat(resp map[string]any) map[string]any {
 			chatUsage["completion_tokens"] = int64(v)
 		}
 		chatUsage["total_tokens"] = int64(getFloat64(usage, "input_tokens") + getFloat64(usage, "output_tokens"))
+		if v := getFloat64(usage, "cache_read_input_tokens"); v > 0 {
+			chatUsage["prompt_tokens_details"] = map[string]any{
+				"cached_tokens": int64(v),
+			}
+		}
 		out["usage"] = chatUsage
 	}
 
@@ -273,6 +283,13 @@ func convertChatResponseToResponses(resp map[string]any) map[string]any {
 		}
 		if v := getFloat64(usage, "completion_tokens"); v > 0 {
 			responsesUsage["output_tokens"] = int64(v)
+		}
+		if details := getMap(usage, "prompt_tokens_details"); details != nil {
+			if v := getFloat64(details, "cached_tokens"); v > 0 {
+				responsesUsage["input_tokens_details"] = map[string]any{
+					"cached_tokens": int64(v),
+				}
+			}
 		}
 		if len(responsesUsage) > 0 {
 			out["usage"] = responsesUsage
@@ -374,6 +391,11 @@ func convertAnthropicResponseToResponses(resp map[string]any) map[string]any {
 		if v := getFloat64(usage, "output_tokens"); v > 0 {
 			responsesUsage["output_tokens"] = int64(v)
 		}
+		if v := getFloat64(usage, "cache_read_input_tokens"); v > 0 {
+			responsesUsage["input_tokens_details"] = map[string]any{
+				"cached_tokens": int64(v),
+			}
+		}
 		if len(responsesUsage) > 0 {
 			out["usage"] = responsesUsage
 		}
@@ -466,6 +488,13 @@ func convertResponsesResponseToChat(resp map[string]any) map[string]any {
 			chatUsage["completion_tokens"] = int64(v)
 		}
 		chatUsage["total_tokens"] = int64(getFloat64(usage, "input_tokens") + getFloat64(usage, "output_tokens"))
+		if details := getMap(usage, "input_tokens_details"); details != nil {
+			if v := getFloat64(details, "cached_tokens"); v > 0 {
+				chatUsage["prompt_tokens_details"] = map[string]any{
+					"cached_tokens": int64(v),
+				}
+			}
+		}
 		out["usage"] = chatUsage
 	}
 
@@ -545,6 +574,11 @@ func convertResponsesResponseToAnthropic(resp map[string]any) map[string]any {
 		}
 		if v := getFloat64(usage, "output_tokens"); v > 0 {
 			anthropicUsage["output_tokens"] = int64(v)
+		}
+		if details := getMap(usage, "input_tokens_details"); details != nil {
+			if v := getFloat64(details, "cached_tokens"); v > 0 {
+				anthropicUsage["cache_read_input_tokens"] = int64(v)
+			}
 		}
 		if len(anthropicUsage) > 0 {
 			out["usage"] = anthropicUsage

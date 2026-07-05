@@ -73,6 +73,7 @@ export interface WindowStats {
   input_tokens: number
   output_tokens: number
   cached_tokens: number
+  cache_write_tokens: number
   avg_duration_ms: number
   avg_ttft_ms: number
   start?: string

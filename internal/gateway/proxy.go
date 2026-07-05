@@ -211,6 +211,8 @@ func handleSameProtocolStream(w http.ResponseWriter, resp *http.Response, inboun
 		logEntry.InputTokens = lastUsage.InputTokens
 		logEntry.OutputTokens = lastUsage.OutputTokens
 		logEntry.TotalTokens = lastUsage.TotalTokens
+		logEntry.CachedTokens = lastUsage.CachedTokens
+		logEntry.CacheWriteTokens = lastUsage.CacheWriteTokens
 	}
 
 	// Record total duration
@@ -475,6 +477,8 @@ func handleConvertedStream(w http.ResponseWriter, resp *http.Response, inboundPr
 		logEntry.InputTokens = lastUsage.InputTokens
 		logEntry.OutputTokens = lastUsage.OutputTokens
 		logEntry.TotalTokens = lastUsage.TotalTokens
+		logEntry.CachedTokens = lastUsage.CachedTokens
+		logEntry.CacheWriteTokens = lastUsage.CacheWriteTokens
 	}
 
 	// Record total duration

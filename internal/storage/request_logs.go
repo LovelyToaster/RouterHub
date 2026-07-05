@@ -219,10 +219,10 @@ func GetStatsSummary(db *sql.DB, p StatsParams) (*StatsSummary, error) {
 	provRows.Close()
 
 	modelRows, err := db.Query(`
-		SELECT requested_model, COUNT(*), COALESCE(SUM(total_tokens), 0)
+		SELECT actual_model, COUNT(*), COALESCE(SUM(total_tokens), 0)
 		FROM request_logs
 		WHERE created_at >= ? AND created_at < ?
-		GROUP BY requested_model
+		GROUP BY actual_model
 	`, curStartStr, curEndStr)
 	if err != nil {
 		return nil, fmt.Errorf("distribution model: %w", err)
@@ -240,7 +240,7 @@ func GetStatsSummary(db *sql.DB, p StatsParams) (*StatsSummary, error) {
 	modelRows.Close()
 
 	// Performance TOP 5 (model + provider) within current window
-	mp, err := scanPerf(db, "requested_model", curStartStr, curEndStr)
+	mp, err := scanPerf(db, "actual_model", curStartStr, curEndStr)
 	if err != nil {
 		return nil, fmt.Errorf("model performance: %w", err)
 	}

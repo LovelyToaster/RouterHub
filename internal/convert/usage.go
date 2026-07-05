@@ -15,6 +15,11 @@ func parseChatStreamUsage(event map[string]any) *StreamUsage {
 		if v := getFloat64(usage, "total_tokens"); v > 0 {
 			u.TotalTokens = int64(v)
 		}
+		if details := getMap(usage, "prompt_tokens_details"); details != nil {
+			if v := getFloat64(details, "cached_tokens"); v > 0 {
+				u.CachedTokens = int64(v)
+			}
+		}
 		if u.InputTokens > 0 || u.OutputTokens > 0 {
 			if u.TotalTokens == 0 {
 				u.TotalTokens = u.InputTokens + u.OutputTokens
@@ -36,6 +41,11 @@ func parseChatStreamUsage(event map[string]any) *StreamUsage {
 				}
 				if v := getFloat64(usage, "total_tokens"); v > 0 {
 					u.TotalTokens = int64(v)
+				}
+				if details := getMap(usage, "prompt_tokens_details"); details != nil {
+					if v := getFloat64(details, "cached_tokens"); v > 0 {
+						u.CachedTokens = int64(v)
+					}
 				}
 				if u.InputTokens > 0 || u.OutputTokens > 0 {
 					if u.TotalTokens == 0 {
@@ -69,6 +79,11 @@ func parseResponsesStreamUsage(event map[string]any) *StreamUsage {
 				if v := getFloat64(usage, "total_tokens"); v > 0 {
 					u.TotalTokens = int64(v)
 				}
+				if details := getMap(usage, "input_tokens_details"); details != nil {
+					if v := getFloat64(details, "cached_tokens"); v > 0 {
+						u.CachedTokens = int64(v)
+					}
+				}
 				if u.InputTokens > 0 || u.OutputTokens > 0 {
 					if u.TotalTokens == 0 {
 						u.TotalTokens = u.InputTokens + u.OutputTokens
@@ -90,6 +105,11 @@ func parseResponsesStreamUsage(event map[string]any) *StreamUsage {
 		}
 		if v := getFloat64(usage, "total_tokens"); v > 0 {
 			u.TotalTokens = int64(v)
+		}
+		if details := getMap(usage, "input_tokens_details"); details != nil {
+			if v := getFloat64(details, "cached_tokens"); v > 0 {
+				u.CachedTokens = int64(v)
+			}
 		}
 		if u.InputTokens > 0 || u.OutputTokens > 0 {
 			if u.TotalTokens == 0 {
@@ -116,6 +136,12 @@ func parseAnthropicStreamUsage(event map[string]any) *StreamUsage {
 			if v := getFloat64(usage, "output_tokens"); v > 0 {
 				u.OutputTokens = int64(v)
 			}
+			if v := getFloat64(usage, "cache_read_input_tokens"); v > 0 {
+				u.CachedTokens = int64(v)
+			}
+			if v := getFloat64(usage, "cache_creation_input_tokens"); v > 0 {
+				u.CacheWriteTokens = int64(v)
+			}
 			if u.InputTokens > 0 || u.OutputTokens > 0 {
 				u.TotalTokens = u.InputTokens + u.OutputTokens
 				return u
@@ -133,6 +159,12 @@ func parseAnthropicStreamUsage(event map[string]any) *StreamUsage {
 				}
 				if v := getFloat64(usage, "output_tokens"); v > 0 {
 					u.OutputTokens = int64(v)
+				}
+				if v := getFloat64(usage, "cache_read_input_tokens"); v > 0 {
+					u.CachedTokens = int64(v)
+				}
+				if v := getFloat64(usage, "cache_creation_input_tokens"); v > 0 {
+					u.CacheWriteTokens = int64(v)
 				}
 				if u.InputTokens > 0 || u.OutputTokens > 0 {
 					u.TotalTokens = u.InputTokens + u.OutputTokens

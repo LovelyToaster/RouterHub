@@ -141,9 +141,11 @@ func ConvertStreamEvent(data []byte, inboundProtocol, providerType string) ([]by
 
 // StreamUsage holds token usage information parsed from stream events.
 type StreamUsage struct {
-	InputTokens  int64
-	OutputTokens int64
-	TotalTokens  int64
+	InputTokens      int64
+	OutputTokens     int64
+	TotalTokens      int64
+	CachedTokens     int64
+	CacheWriteTokens int64
 }
 
 // ParseStreamUsage attempts to extract token usage from a stream event.
@@ -235,9 +237,13 @@ func setIfNotEmpty(m map[string]any, key string, v any) {
 	case bool:
 		m[key] = val
 	case float64:
-		m[key] = val
+		if val != 0 {
+			m[key] = val
+		}
 	case int64:
-		m[key] = val
+		if val != 0 {
+			m[key] = val
+		}
 	case []any:
 		if len(val) > 0 {
 			m[key] = val
