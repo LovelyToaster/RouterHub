@@ -39,35 +39,9 @@ jobs:
           version: v1.64.8
           args: --timeout=5m
 
-  backend:
-    name: Go tests
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.23'
-          cache: true
-
-      - name: Ensure embed dir exists
-        run: |
-          mkdir -p internal/webui/dist
-          touch internal/webui/dist/.gitkeep
-
-      - name: Go vet
-        run: go vet ./...
-
-      - name: Go test
-        run: go test -race -count=1 ./...
-
   frontend:
     name: Frontend build
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: web
     steps:
       - uses: actions/checkout@v4
 
@@ -79,7 +53,48 @@ jobs:
           cache-dependency-path: web/package-lock.json
 
       - name: Install dependencies
+        working-directory: web
         run: npm ci --no-audit --no-fund
 
       - name: Type check + build
+        working-directory: web
         run: npm run build
+
+      - name: Copy dist to embed dir
+        run: |
+          rm -rf internal/webui/dist
+          mkdir -p internal/webui/dist
+          cp -r web/dist/. internal/webui/dist/
+
+      - name: Upload frontend dist
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: internal/webui/dist
+          retention-days: 1
+          if-no-files-found: error
+
+  backend:
+    name: Go tests
+    runs-on: ubuntu-latest
+    needs: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+          cache: true
+
+      - name: Download frontend dist
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-dist
+          path: internal/webui/dist
+
+      - name: Go vet
+        run: go vet ./...
+
+      - name: Go test
+        run: go test -race -count=1 ./...
