@@ -112,6 +112,8 @@ func New(db *sql.DB, cfg *config.Config) http.Handler {
 		r.Post("/v1/responses", gatewayHandler.ServeHTTP)
 		// Anthropic Messages
 		r.Post("/v1/messages", gatewayHandler.ServeHTTP)
+		// List models (OpenAI / Anthropic compatible)
+		r.Get("/v1/models", gateway.ModelsHandler(db))
 	})
 
 	// Static frontend: all other paths serve the SPA

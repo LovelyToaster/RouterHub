@@ -123,3 +123,27 @@ func ListModelAliasesByProvider(db *sql.DB, providerID string) ([]ModelAlias, er
 	}
 	return aliases, rows.Err()
 }
+
+// ListExposedAliases returns all enabled aliases from enabled providers.
+func ListExposedAliases(db *sql.DB) ([]string, error) {
+	rows, err := db.Query(`
+		SELECT ma.alias
+		FROM model_aliases ma
+		JOIN providers p ON p.id = ma.provider_id
+		WHERE ma.enabled = 1 AND p.enabled = 1
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("list exposed aliases: %w", err)
+	}
+	defer rows.Close()
+
+	var aliases []string
+	for rows.Next() {
+		var a string
+		if err := rows.Scan(&a); err != nil {
+			return nil, fmt.Errorf("scan exposed alias: %w", err)
+		}
+		aliases = append(aliases, a)
+	}
+	return aliases, rows.Err()
+}

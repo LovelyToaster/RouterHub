@@ -207,3 +207,34 @@ func FindEnabledModelsByNameForProvider(db *sql.DB, providerID string, modelName
 	}
 	return results, rows.Err()
 }
+
+// ExposedProviderModel represents a model visible through the gateway /v1/models endpoint.
+type ExposedProviderModel struct {
+	ModelName          string
+	ModelPrefix        string
+	HideOriginalModels bool
+}
+
+// ListExposedProviderModels returns all enabled provider models from enabled providers.
+func ListExposedProviderModels(db *sql.DB) ([]ExposedProviderModel, error) {
+	rows, err := db.Query(`
+		SELECT pm.model_name, p.model_prefix, p.hide_original_models
+		FROM provider_models pm
+		JOIN providers p ON p.id = pm.provider_id
+		WHERE pm.enabled = 1 AND p.enabled = 1
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("list exposed provider models: %w", err)
+	}
+	defer rows.Close()
+
+	var models []ExposedProviderModel
+	for rows.Next() {
+		var m ExposedProviderModel
+		if err := rows.Scan(&m.ModelName, &m.ModelPrefix, &m.HideOriginalModels); err != nil {
+			return nil, fmt.Errorf("scan exposed provider model: %w", err)
+		}
+		models = append(models, m)
+	}
+	return models, rows.Err()
+}
