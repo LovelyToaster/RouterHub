@@ -1,3 +1,8 @@
+# Test workflow：为 pull_request 与 push main 运行 lint / frontend / backend 三个 job。
+# - lint    ：golangci-lint 独立跑，不依赖前端产物
+# - frontend：npm run build，产物上传为 artifact（供 backend 下载）
+# - backend ：needs frontend，下载 artifact 后 go vet + go test -race
+# 排除文档、忽略文件类改动，避免无谓触发。
 name: Test
 
 on:
