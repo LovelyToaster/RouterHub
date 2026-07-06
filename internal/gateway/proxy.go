@@ -72,6 +72,12 @@ func ProxyRequest(w http.ResponseWriter, r *http.Request, selected *SelectedProv
 		if keyLower == "authorization" || keyLower == "x-api-key" {
 			continue
 		}
+		// Drop Accept-Encoding so Go's transport handles gzip transparently;
+		// otherwise the upstream may return a gzipped body that we forward
+		// as-is, breaking token-usage parsing in the non-streaming path.
+		if keyLower == "accept-encoding" {
+			continue
+		}
 		// Skip hop-by-hop headers
 		if hopByHopHeaders[key] {
 			continue
@@ -272,6 +278,11 @@ func ConvertedProxyRequest(w http.ResponseWriter, r *http.Request, selected *Sel
 	for key, values := range r.Header {
 		keyLower := strings.ToLower(key)
 		if keyLower == "authorization" || keyLower == "x-api-key" {
+			continue
+		}
+		// Drop Accept-Encoding so Go's transport handles gzip transparently;
+		// see ProxyRequest for the rationale.
+		if keyLower == "accept-encoding" {
 			continue
 		}
 		if hopByHopHeaders[key] {
@@ -516,6 +527,11 @@ func setProviderAuth(req *http.Request, provider storage.Provider) {
 func parseUsageFromResponse(body []byte, logEntry *storage.RequestLog, inboundProtocol string) {
 	var data map[string]interface{}
 	if err := json.Unmarshal(body, &data); err != nil {
+		// This should not happen for a successful upstream response, so log
+		// enough context to diagnose it (e.g. an unexpected Content-Encoding
+		// slipping through, or a non-JSON body from a misbehaving upstream).
+		fmt.Printf("parseUsageFromResponse: json unmarshal failed request_id=%s protocol=%s err=%v\n",
+			logEntry.RequestID, inboundProtocol, err)
 		return
 	}
 
