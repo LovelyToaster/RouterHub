@@ -693,6 +693,35 @@ func TestParseStreamUsage_Anthropic(t *testing.T) {
 	if usage.OutputTokens != 20 {
 		t.Errorf("expected output_tokens 20, got %d", usage.OutputTokens)
 	}
+	// Absent cache fields must not inflate the cache counters.
+	if usage.CachedTokens != 0 {
+		t.Errorf("expected cached_tokens 0, got %d", usage.CachedTokens)
+	}
+	if usage.CacheWriteTokens != 0 {
+		t.Errorf("expected cache_write_tokens 0, got %d", usage.CacheWriteTokens)
+	}
+}
+
+func TestParseStreamUsage_Anthropic_WithCache(t *testing.T) {
+	// Anthropic's raw input_tokens excludes cache; the parser must fold cache
+	// reads and writes into InputTokens so the metric is comparable to OpenAI.
+	event := []byte(`{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"input_tokens":10,"output_tokens":20,"cache_read_input_tokens":80,"cache_creation_input_tokens":30}}`)
+	usage := ParseStreamUsage(event, "anthropic-messages")
+	if usage == nil {
+		t.Fatal("expected usage to be parsed")
+	}
+	if usage.InputTokens != 120 {
+		t.Errorf("expected input_tokens 120 (10+80+30), got %d", usage.InputTokens)
+	}
+	if usage.CachedTokens != 80 {
+		t.Errorf("expected cached_tokens 80, got %d", usage.CachedTokens)
+	}
+	if usage.CacheWriteTokens != 30 {
+		t.Errorf("expected cache_write_tokens 30, got %d", usage.CacheWriteTokens)
+	}
+	if usage.TotalTokens != 140 {
+		t.Errorf("expected total_tokens 140 (120+20), got %d", usage.TotalTokens)
+	}
 }
 
 func TestParseStreamUsage_Responses(t *testing.T) {

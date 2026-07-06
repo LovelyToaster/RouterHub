@@ -280,8 +280,10 @@ function RequestsOverviewCard({ stats, t }: { stats: StatsSummary; t: any }) {
 }
 
 function TokensCard({ stats, t }: { stats: StatsSummary; t: any }) {
-  const denom = stats.current.input_tokens + stats.current.cached_tokens
-  const hitRate = denom > 0 ? stats.current.cached_tokens / denom : 0
+  const hitRate =
+    stats.current.input_tokens > 0
+      ? stats.current.cached_tokens / stats.current.input_tokens
+      : 0
   return (
     <GlassCard className="p-5">
       <CardHeader title={t('dashboard.tokensCard')} icon={Zap} color="#f59e0b" />

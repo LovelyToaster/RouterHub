@@ -70,7 +70,9 @@ func TestParseUsageFromResponse_Anthropic(t *testing.T) {
 	}`)
 	le := &storage.RequestLog{}
 	parseUsageFromResponse(body, le, "anthropic-messages")
-	if le.InputTokens != 100 || le.OutputTokens != 20 || le.CachedTokens != 800 || le.CacheWriteTokens != 300 || le.TotalTokens != 120 {
+	// Anthropic input counters are normalised so that InputTokens represents
+	// the total input tokens including cache reads/writes.
+	if le.InputTokens != 1200 || le.OutputTokens != 20 || le.CachedTokens != 800 || le.CacheWriteTokens != 300 || le.TotalTokens != 1220 {
 		t.Fatalf("anthropic mismatch input=%d output=%d cached=%d cache_write=%d total=%d",
 			le.InputTokens, le.OutputTokens, le.CachedTokens, le.CacheWriteTokens, le.TotalTokens)
 	}
@@ -87,8 +89,27 @@ func TestParseUsageFromResponse_Anthropic_NoWrite(t *testing.T) {
 	}`)
 	le := &storage.RequestLog{}
 	parseUsageFromResponse(body, le, "anthropic-messages")
-	if le.CachedTokens != 0 || le.CacheWriteTokens != 0 {
-		t.Fatalf("expected 0/0 got cached=%d cache_write=%d", le.CachedTokens, le.CacheWriteTokens)
+	if le.InputTokens != 50 || le.CachedTokens != 0 || le.CacheWriteTokens != 0 || le.TotalTokens != 60 {
+		t.Fatalf("expected input=50 cached=0 cache_write=0 total=60 got input=%d cached=%d cache_write=%d total=%d",
+			le.InputTokens, le.CachedTokens, le.CacheWriteTokens, le.TotalTokens)
+	}
+}
+
+// Ensures cache_write alone is counted in InputTokens without inflating CachedTokens.
+func TestParseUsageFromResponse_Anthropic_WriteOnly(t *testing.T) {
+	body := []byte(`{
+		"usage": {
+			"input_tokens": 40,
+			"output_tokens": 5,
+			"cache_read_input_tokens": 0,
+			"cache_creation_input_tokens": 200
+		}
+	}`)
+	le := &storage.RequestLog{}
+	parseUsageFromResponse(body, le, "anthropic-messages")
+	if le.InputTokens != 240 || le.CachedTokens != 0 || le.CacheWriteTokens != 200 || le.TotalTokens != 245 {
+		t.Fatalf("write-only mismatch input=%d cached=%d cache_write=%d total=%d",
+			le.InputTokens, le.CachedTokens, le.CacheWriteTokens, le.TotalTokens)
 	}
 }
 

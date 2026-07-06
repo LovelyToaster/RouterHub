@@ -558,20 +558,27 @@ func parseUsageFromResponse(body []byte, logEntry *storage.RequestLog, inboundPr
 		}
 	case protocol.ProtocolAnthropic:
 		if usage, ok := data["usage"].(map[string]interface{}); ok {
+			// Anthropic reports three independent input counters: raw input,
+			// cache-read, cache-creation. We normalise them so that
+			// InputTokens == "total input tokens including cache reads/writes",
+			// matching the OpenAI convention. CachedTokens keeps only the read
+			// portion; CacheWriteTokens keeps the creation portion separately.
+			var rawInput, cacheRead, cacheWrite int64
 			if v, ok := usage["input_tokens"].(float64); ok {
-				logEntry.InputTokens = int64(v)
+				rawInput = int64(v)
 			}
 			if v, ok := usage["output_tokens"].(float64); ok {
 				logEntry.OutputTokens = int64(v)
 			}
-			// Anthropic exposes cache reads and writes as separate counters and
-			// bills them differently. Keep them apart in the log.
 			if v, ok := usage["cache_read_input_tokens"].(float64); ok {
-				logEntry.CachedTokens = int64(v)
+				cacheRead = int64(v)
 			}
 			if v, ok := usage["cache_creation_input_tokens"].(float64); ok {
-				logEntry.CacheWriteTokens = int64(v)
+				cacheWrite = int64(v)
 			}
+			logEntry.InputTokens = rawInput + cacheRead + cacheWrite
+			logEntry.CachedTokens = cacheRead
+			logEntry.CacheWriteTokens = cacheWrite
 			// Anthropic doesn't have total_tokens in the same way
 			logEntry.TotalTokens = logEntry.InputTokens + logEntry.OutputTokens
 		}

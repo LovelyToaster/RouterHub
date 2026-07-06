@@ -124,24 +124,27 @@ func parseResponsesStreamUsage(event map[string]any) *StreamUsage {
 
 // parseAnthropicStreamUsage attempts to extract token usage from Anthropic Messages stream events.
 // Usage appears in message_delta event.
+//
+// Anthropic reports three independent input counters (input_tokens,
+// cache_read_input_tokens, cache_creation_input_tokens). We normalise them so
+// that u.InputTokens represents the total input tokens including cache reads
+// and writes, matching the OpenAI convention. u.CachedTokens keeps only the
+// read portion, u.CacheWriteTokens keeps the creation portion separately.
 func parseAnthropicStreamUsage(event map[string]any) *StreamUsage {
 	eventType := getString(event, "type")
 
 	if eventType == "message_delta" {
 		if usage := getMap(event, "usage"); usage != nil {
 			u := &StreamUsage{}
-			if v := getFloat64(usage, "input_tokens"); v > 0 {
-				u.InputTokens = int64(v)
-			}
+			rawInput := int64(getFloat64(usage, "input_tokens"))
 			if v := getFloat64(usage, "output_tokens"); v > 0 {
 				u.OutputTokens = int64(v)
 			}
-			if v := getFloat64(usage, "cache_read_input_tokens"); v > 0 {
-				u.CachedTokens = int64(v)
-			}
-			if v := getFloat64(usage, "cache_creation_input_tokens"); v > 0 {
-				u.CacheWriteTokens = int64(v)
-			}
+			cacheRead := int64(getFloat64(usage, "cache_read_input_tokens"))
+			cacheWrite := int64(getFloat64(usage, "cache_creation_input_tokens"))
+			u.InputTokens = rawInput + cacheRead + cacheWrite
+			u.CachedTokens = cacheRead
+			u.CacheWriteTokens = cacheWrite
 			if u.InputTokens > 0 || u.OutputTokens > 0 {
 				u.TotalTokens = u.InputTokens + u.OutputTokens
 				return u
@@ -154,18 +157,15 @@ func parseAnthropicStreamUsage(event map[string]any) *StreamUsage {
 		if message := getMap(event, "message"); message != nil {
 			if usage := getMap(message, "usage"); usage != nil {
 				u := &StreamUsage{}
-				if v := getFloat64(usage, "input_tokens"); v > 0 {
-					u.InputTokens = int64(v)
-				}
+				rawInput := int64(getFloat64(usage, "input_tokens"))
 				if v := getFloat64(usage, "output_tokens"); v > 0 {
 					u.OutputTokens = int64(v)
 				}
-				if v := getFloat64(usage, "cache_read_input_tokens"); v > 0 {
-					u.CachedTokens = int64(v)
-				}
-				if v := getFloat64(usage, "cache_creation_input_tokens"); v > 0 {
-					u.CacheWriteTokens = int64(v)
-				}
+				cacheRead := int64(getFloat64(usage, "cache_read_input_tokens"))
+				cacheWrite := int64(getFloat64(usage, "cache_creation_input_tokens"))
+				u.InputTokens = rawInput + cacheRead + cacheWrite
+				u.CachedTokens = cacheRead
+				u.CacheWriteTokens = cacheWrite
 				if u.InputTokens > 0 || u.OutputTokens > 0 {
 					u.TotalTokens = u.InputTokens + u.OutputTokens
 					return u

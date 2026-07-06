@@ -3,6 +3,7 @@ package storage
 import (
 	"database/sql"
 	"fmt"
+	"time"
 )
 
 // Migrate creates all tables and indexes needed by the application.
@@ -125,5 +126,57 @@ func Migrate(db *sql.DB) error {
 		}
 	}
 
+	if err := runDataMigrations(db); err != nil {
+		return fmt.Errorf("data migration: %w", err)
+	}
+
 	return nil
+}
+
+// runDataMigrations executes one-off data-normalisation SQL. Each migration is
+// keyed in app_settings and only runs once per database.
+func runDataMigrations(db *sql.DB) error {
+	const key = "data_migration_normalize_anthropic_input_tokens_v1"
+
+	var existing string
+	err := db.QueryRow(`SELECT value FROM app_settings WHERE key = ?`, key).Scan(&existing)
+	if err == nil {
+		return nil // already applied
+	}
+	if err != sql.ErrNoRows {
+		return fmt.Errorf("check migration flag: %w", err)
+	}
+
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	// Historically we stored Anthropic's raw input_tokens (which excludes cache
+	// reads/writes) verbatim. Normalise those rows so that input_tokens ==
+	// "total input tokens including cache reads/writes", matching how we now
+	// record fresh Anthropic requests and mirroring the OpenAI convention.
+	// SQLite evaluates all SET expressions against the row's original values,
+	// so the total_tokens expression still sees the pre-update input_tokens.
+	// NB: provider_type stores the protocol constant (see internal/protocol),
+	// which for Anthropic is "anthropic-messages" — not the bare "anthropic".
+	if _, err := tx.Exec(`
+		UPDATE request_logs
+		   SET input_tokens = input_tokens + cached_tokens + cache_write_tokens,
+		       total_tokens = input_tokens + cached_tokens + cache_write_tokens + output_tokens
+		 WHERE provider_type = 'anthropic-messages'
+	`); err != nil {
+		return fmt.Errorf("normalise anthropic input tokens: %w", err)
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	if _, err := tx.Exec(
+		`INSERT INTO app_settings (key, value, updated_at) VALUES (?, ?, ?)`,
+		key, now, now,
+	); err != nil {
+		return fmt.Errorf("record migration flag: %w", err)
+	}
+
+	return tx.Commit()
 }
