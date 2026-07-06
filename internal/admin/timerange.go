@@ -50,7 +50,7 @@ const (
 // Window describes the current and previous comparison time windows for a range.
 //
 // - Cur[Start,End) is the current window (start-of-period to now).
-// - Prev[Start,End) is the aligned previous window (same offset within the previous full period).
+// - Prev[Start,End) is the full previous natural period (e.g. yesterday, last week, last month).
 // - HasPrev is false for RangeAll or when a previous window cannot be computed.
 // - Bucket controls the granularity of the time-series buckets.
 // - SeriesStart/SeriesEnd bound the time-series chart. For RangeAll this is
@@ -80,9 +80,9 @@ func ComputeWindow(now time.Time, loc *time.Location, r RangeKey) Window {
 	case RangeDay:
 		curStart := time.Date(localNow.Year(), localNow.Month(), localNow.Day(), 0, 0, 0, 0, loc)
 		curEnd := localNow
-		delta := curEnd.Sub(curStart)
+		// Previous window covers the full previous natural day: [yesterday 00:00, today 00:00).
 		prevStart := curStart.AddDate(0, 0, -1)
-		prevEnd := prevStart.Add(delta)
+		prevEnd := curStart
 		seriesEnd := curStart.AddDate(0, 0, 1) // fill up to tomorrow 00:00
 		return Window{
 			Range:       RangeDay,
@@ -106,9 +106,9 @@ func ComputeWindow(now time.Time, loc *time.Location, r RangeKey) Window {
 		curStart := time.Date(localNow.Year(), localNow.Month(), localNow.Day(), 0, 0, 0, 0, loc).
 			AddDate(0, 0, -daysSinceMonday)
 		curEnd := localNow
-		delta := curEnd.Sub(curStart)
+		// Previous window covers the full previous natural week: [last Monday 00:00, this Monday 00:00).
 		prevStart := curStart.AddDate(0, 0, -7)
-		prevEnd := prevStart.Add(delta)
+		prevEnd := curStart
 		seriesEnd := curStart.AddDate(0, 0, 7) // fill up to next Monday 00:00
 		return Window{
 			Range:       RangeWeek,
@@ -125,14 +125,9 @@ func ComputeWindow(now time.Time, loc *time.Location, r RangeKey) Window {
 	case RangeMonth:
 		curStart := time.Date(localNow.Year(), localNow.Month(), 1, 0, 0, 0, 0, loc)
 		curEnd := localNow
-		delta := curEnd.Sub(curStart)
+		// Previous window covers the full previous natural month: [last month 1st 00:00, this month 1st 00:00).
 		prevStart := curStart.AddDate(0, -1, 0)
-		// Cap prevEnd at the end of the previous month so we never spill into cur.
-		prevMonthEnd := curStart // exclusive upper bound of previous month
-		prevEnd := prevStart.Add(delta)
-		if prevEnd.After(prevMonthEnd) {
-			prevEnd = prevMonthEnd
-		}
+		prevEnd := curStart
 		seriesEnd := curStart.AddDate(0, 1, 0) // fill up to next month 1st 00:00
 		return Window{
 			Range:       RangeMonth,

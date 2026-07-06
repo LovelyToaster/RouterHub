@@ -173,6 +173,21 @@ function CardHeader({
 
 // Build "副标"：全部模式显示日均，其它模式显示环比 Δ%。
 
+// deltaLabelForRange returns the i18n key used to label the range's delta metric.
+// Only meaningful when range is day/week/month (all is handled separately via daily average).
+function deltaLabelForRange(range: RangeKey): string {
+  switch (range) {
+    case 'day':
+      return 'dashboard.deltaVsYesterday'
+    case 'week':
+      return 'dashboard.deltaVsLastWeek'
+    case 'month':
+      return 'dashboard.deltaVsLastMonth'
+    default:
+      return 'dashboard.deltaVsYesterday' // unreachable
+  }
+}
+
 // Build side metric data for range-aware comparison.
 // - all: daily average (raw value / active_days)
 // - other: Δ% vs previous window (colored, with arrow)
@@ -190,26 +205,28 @@ function sideMetric(
     }
   }
   if (!stats.has_previous_window) return null
+  const deltaLabelKey = deltaLabelForRange(stats.range)
   const delta = deltaPercent(cur, prev)
   if (delta === null) {
     return {
-      label: t('dashboard.deltaVsPrevious'),
+      label: t(deltaLabelKey),
       value: '—',
     }
   }
   const pct = Math.abs(delta) * 100
   if (pct < 0.005) {
     return {
-      label: t('dashboard.deltaVsPrevious'),
+      label: t(deltaLabelKey),
       value: `${fmt2(0)}%`,
       icon: Minus,
     }
   }
   const up = delta > 0
   return {
-    label: t('dashboard.deltaVsPrevious'),
+    label: t(deltaLabelKey),
     value: `${fmt2(pct)}%`,
-    color: up ? '#10b981' : '#ef4444',
+    // Chinese stock-market convention: up = red, down = green.
+    color: up ? '#ef4444' : '#10b981',
     icon: up ? ArrowUp : ArrowDown,
   }
 }
