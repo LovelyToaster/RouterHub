@@ -4,7 +4,6 @@ import {
   Activity,
   XCircle,
   Zap,
-  Heart,
   ArrowUp,
   ArrowDown,
   Minus,
@@ -70,8 +69,8 @@ const RANGE_ORDER: RangeKey[] = ['all', 'month', 'week', 'day']
 function DashboardSkeleton() {
   return (
     <div className="space-y-6 animate-pulse">
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        {[...Array(3)].map((_, i) => (
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {[...Array(2)].map((_, i) => (
           <div key={i} className="h-40 rounded-2xl bg-card" />
         ))}
       </div>
@@ -231,7 +230,8 @@ function sideMetric(
   }
 }
 
-// Side metric for the health card: always show "success/total".
+// successCountMetric returns the "success/total" summary displayed in the
+// requests-overview card.
 function healthSideMetric(
   stats: StatsSummary,
   t: any,
@@ -242,24 +242,38 @@ function healthSideMetric(
   }
 }
 
-function RequestsCard({ stats, t }: { stats: StatsSummary; t: any }) {
+// RequestsOverviewCard merges the old Requests + Health cards into a single
+// wider card, laying out four metrics in a row on md+ (2×2 on small screens):
+//   [total requests] [Δ vs previous] [success rate] [success/total]
+function RequestsOverviewCard({ stats, t }: { stats: StatsSummary; t: any }) {
   const cur = stats.current.requests
   const prev = stats.previous.requests
   const side = sideMetric(stats, cur, prev, t)
+  const successRate =
+    stats.current.requests > 0
+      ? stats.current.successful_requests / stats.current.requests
+      : null
+  const successCount = healthSideMetric(stats, t)
   return (
     <GlassCard className="p-5">
-      <CardHeader title={t('dashboard.requestsCard')} icon={Activity} color="#6366f1" />
-      <div className="flex items-start justify-between gap-6">
+      <CardHeader
+        title={t('dashboard.requestsOverviewCard')}
+        icon={Activity}
+        color="#6366f1"
+      />
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <Metric label={t(`dashboard.range_${stats.range}`)} value={formatCompact(cur)} />
-        {side && (
-          <Metric
-            label={side.label}
-            value={side.value}
-            valueColor={side.color}
-            icon={side.icon}
-            align="right"
-          />
-        )}
+        <Metric
+          label={side ? side.label : t(deltaLabelForRange(stats.range))}
+          value={side ? side.value : '—'}
+          valueColor={side?.color}
+          icon={side?.icon}
+        />
+        <Metric
+          label={t('dashboard.successRate')}
+          value={successRate === null ? '—' : formatPercent(successRate)}
+        />
+        <Metric label={successCount.label} value={successCount.value} />
       </div>
     </GlassCard>
   )
@@ -276,22 +290,6 @@ function TokensCard({ stats, t }: { stats: StatsSummary; t: any }) {
         <Metric label={t('dashboard.outputTokens')} value={formatCompact(stats.current.output_tokens)} />
         <Metric label={t('dashboard.cachedTokens')} value={formatCompact(stats.current.cached_tokens)} />
         <Metric label={t('dashboard.cacheHitRate')} value={formatPercent(hitRate)} />
-      </div>
-    </GlassCard>
-  )
-}
-
-function HealthCard({ stats, t }: { stats: StatsSummary; t: any }) {
-  const cur = stats.current
-  const curRate = cur.requests > 0 ? cur.successful_requests / cur.requests : null
-  const value = curRate === null ? '—' : formatPercent(curRate)
-  const side = healthSideMetric(stats, t)
-  return (
-    <GlassCard className="p-5">
-      <CardHeader title={t('dashboard.healthCard')} icon={Heart} color="#10b981" />
-      <div className="flex items-start justify-between gap-6">
-        <Metric label={t(`dashboard.range_${stats.range}`)} value={value} />
-        <Metric label={side.label} value={side.value} align="right" />
       </div>
     </GlassCard>
   )
@@ -536,10 +534,9 @@ export function DashboardPage() {
         className={`space-y-6 transition-opacity duration-150 ${pending ? 'opacity-60' : 'opacity-100'}`}
       >
       {/* Info cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <RequestsCard stats={stats} t={t} />
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <RequestsOverviewCard stats={stats} t={t} />
         <TokensCard stats={stats} t={t} />
-        <HealthCard stats={stats} t={t} />
       </div>
 
       {/* Charts */}
