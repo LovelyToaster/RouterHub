@@ -286,8 +286,6 @@ function DistributionCard({ stats, t }: { stats: StatsSummary; t: any }) {
         ? t('dashboard.providerRequestsDistribution')
         : t('dashboard.providerTokensDistribution')
 
-  const max = data.length > 0 ? Math.max(...data.map((d) => d.count)) : 0
-
   return (
     <GlassCard className="p-6">
       <div className="flex items-center justify-between mb-4 gap-3 flex-wrap">
@@ -333,7 +331,7 @@ function DistributionCard({ stats, t }: { stats: StatsSummary; t: any }) {
                     </div>
                     <div className="h-1.5 rounded-full bg-surface-lighter overflow-hidden">
                       <div
-                        style={{ width: `${max > 0 ? (item.count / max) * 100 : 0}%` }}
+                        style={{ width: `${pct}%` }}
                         className="h-full rounded-full bg-accent"
                       />
                     </div>
