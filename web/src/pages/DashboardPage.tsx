@@ -8,54 +8,11 @@ import {
   ArrowDown,
   Minus,
 } from 'lucide-react'
-import {
-  LineChart,
-  Line,
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
-} from 'recharts'
 import { GlassCard } from '@/components/ui/GlassCard'
+import { RequestsTrendChart, TokensTrendChart } from '@/components/dashboard/TrendCharts'
 import { useStatsSummaryStream } from '@/hooks/useStatsSummaryStream'
+import { fmt2, formatCompact, formatMs, formatPercent } from '@/lib/format'
 import type { StatsSummary, RangeKey } from '@/types'
-
-// stripZeros removes redundant trailing zeros from a fixed-decimal string.
-// e.g. "23.00" -> "23", "23.10" -> "23.1", "23.45" -> "23.45"
-function stripZeros(s: string): string {
-  if (!s.includes('.')) return s
-  return s.replace(/\.?0+$/, '')
-}
-
-function fmt2(n: number): string {
-  return stripZeros(n.toFixed(2))
-}
-
-function formatCompact(n: number): string {
-  if (!Number.isFinite(n)) return '0'
-  const abs = Math.abs(n)
-  if (abs < 1000) return String(Math.round(n))
-  if (abs < 1e6) return `${fmt2(n / 1e3)}K`
-  if (abs < 1e9) return `${fmt2(n / 1e6)}M`
-  if (abs < 1e12) return `${fmt2(n / 1e9)}B`
-  return `${fmt2(n / 1e12)}T`
-}
-
-function formatPercent(v: number): string {
-  return `${fmt2(v * 100)}%`
-}
-
-function formatMs(v: number): string {
-  if (!Number.isFinite(v)) return '0ms'
-  const abs = Math.abs(v)
-  if (abs < 1000) return `${fmt2(v)}ms`
-  if (abs < 60_000) return `${fmt2(v / 1000)}s`
-  if (abs < 3_600_000) return `${fmt2(v / 60_000)}m`
-  return `${fmt2(v / 3_600_000)}h`
-}
 
 // deltaPercent returns a Δ ratio: (cur - prev) / prev, or null when undefined.
 function deltaPercent(cur: number, prev: number): number | null {
@@ -450,29 +407,6 @@ function PerformanceCard({ stats, t }: { stats: StatsSummary; t: any }) {
   )
 }
 
-// ─── X-axis label helpers ────────────────────────────────────────────────────
-
-function seriesTickFormatter(bucket: StatsSummary['bucket_kind']) {
-  return (v: string) => {
-    if (!v) return ''
-    if (bucket === 'hour') {
-      // "2026-07-04 15:04" -> "15:00"
-      const parts = v.split(' ')
-      if (parts.length === 2) {
-        const [h] = parts[1].split(':')
-        return `${h}:00`
-      }
-      return v
-    }
-    if (bucket === 'month') {
-      // "2026-07" -> "2026-07"
-      return v
-    }
-    // day / week: "2026-07-04" -> "07-04"
-    return v.length >= 10 ? v.slice(5, 10) : v
-  }
-}
-
 // ─── Page ────────────────────────────────────────────────────────────────────
 
 export function DashboardPage() {
@@ -490,7 +424,6 @@ export function DashboardPage() {
   )
 
   const bucketKind = stats?.bucket_kind ?? 'day'
-  const tickFormatter = useMemo(() => seriesTickFormatter(bucketKind), [bucketKind])
 
   const header = (
     <div className="flex items-center justify-between gap-3 flex-wrap">
@@ -549,43 +482,11 @@ export function DashboardPage() {
             {t('dashboard.requestsTrend')}
           </h3>
           <div className="h-72">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart
-                data={stats.series ?? []}
-                margin={{ top: 5, right: 20, left: 0, bottom: 5 }}
-              >
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--color-card-border)" />
-                <XAxis
-                  dataKey="date"
-                  stroke="#6b7280"
-                  tick={{ fill: '#6b7280', fontSize: 12 }}
-                  tickFormatter={tickFormatter}
-                />
-                <YAxis
-                  stroke="#6b7280"
-                  tick={{ fill: '#6b7280', fontSize: 12 }}
-                  tickFormatter={(v) => formatCompact(Number(v))}
-                />
-                <Tooltip
-                  contentStyle={{
-                    backgroundColor: 'var(--color-surface-light)',
-                    border: '1px solid var(--color-card-border)',
-                    borderRadius: '12px',
-                    color: 'var(--color-text-primary)',
-                  }}
-                  formatter={(v: any) => formatCompact(Number(v))}
-                />
-                <Line
-                  type="monotone"
-                  dataKey="count"
-                  name={t('dashboard.requestsCount')}
-                  stroke="#6366f1"
-                  strokeWidth={2}
-                  dot={{ fill: '#6366f1', strokeWidth: 0, r: 4 }}
-                  activeDot={{ r: 6, fill: '#818cf8' }}
-                />
-              </LineChart>
-            </ResponsiveContainer>
+            <RequestsTrendChart
+              series={stats.series ?? []}
+              bucketKind={bucketKind}
+              label={t('dashboard.requestsCount')}
+            />
           </div>
         </GlassCard>
 
@@ -598,40 +499,11 @@ export function DashboardPage() {
             {t('dashboard.tokenTrend')}
           </h3>
           <div className="h-72">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart
-                data={stats.token_series ?? []}
-                margin={{ top: 5, right: 20, left: 0, bottom: 5 }}
-              >
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--color-card-border)" />
-                <XAxis
-                  dataKey="date"
-                  stroke="#6b7280"
-                  tick={{ fill: '#6b7280', fontSize: 12 }}
-                  tickFormatter={tickFormatter}
-                />
-                <YAxis
-                  stroke="#6b7280"
-                  tick={{ fill: '#6b7280', fontSize: 12 }}
-                  tickFormatter={(v) => formatCompact(Number(v))}
-                />
-                <Tooltip
-                  contentStyle={{
-                    backgroundColor: 'var(--color-surface-light)',
-                    border: '1px solid var(--color-card-border)',
-                    borderRadius: '12px',
-                    color: 'var(--color-text-primary)',
-                  }}
-                  formatter={(v: any) => formatCompact(Number(v))}
-                />
-                <Bar
-                  dataKey="count"
-                  name={t('dashboard.tokenCount')}
-                  fill="#8b5cf6"
-                  radius={[4, 4, 0, 0]}
-                />
-              </BarChart>
-            </ResponsiveContainer>
+            <TokensTrendChart
+              series={stats.token_series ?? []}
+              bucketKind={bucketKind}
+              label={t('dashboard.tokenCount')}
+            />
           </div>
         </GlassCard>
 

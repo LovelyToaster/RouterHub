@@ -6,7 +6,11 @@ function stripZeros(s: string): string {
   return s.replace(/\.?0+$/, '')
 }
 
-function fmt2(n: number): string {
+/**
+ * fmt2 renders a number with up to two decimal places, dropping trailing
+ * zeros for a cleaner display (e.g. 23.00 -> "23", 23.10 -> "23.1").
+ */
+export function fmt2(n: number): string {
   return stripZeros(n.toFixed(2))
 }
 
