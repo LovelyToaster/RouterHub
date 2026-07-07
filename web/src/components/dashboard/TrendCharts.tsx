@@ -228,8 +228,17 @@ function TrendChartBase({ series, bucketKind, label, chartType }: TrendChartProp
       // Force y axis to start at 0 so line and bar charts share the same
       // baseline. hasAnyValue guards against the all-zero case at the parent
       // level (noData placeholder), so max is always > 0 here.
+      // For bar charts, pad the x scale by 0.5 bucket on each side so edge
+      // bars (index 0 and N-1) render at full width instead of getting
+      // clipped in half at the plotting area boundary.
       scales: {
-        x: { time: false },
+        x:
+          chartType === 'bar'
+            ? {
+                time: false,
+                range: () => [-0.5, Math.max(0, series.length - 1) + 0.5],
+              }
+            : { time: false },
         y: {
           range: (_u, _min, max) => [0, max],
         },
