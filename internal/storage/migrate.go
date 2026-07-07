@@ -151,7 +151,7 @@ func runDataMigrations(db *sql.DB) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	// Historically we stored Anthropic's raw input_tokens (which excludes cache
 	// reads/writes) verbatim. Normalise those rows so that input_tokens ==

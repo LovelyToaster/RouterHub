@@ -7,21 +7,6 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// openMemoryDB opens an in-memory SQLite database, applies the migrations, and
-// returns the handle. Failure aborts the test.
-func openMemoryDB(t *testing.T) *sql.DB {
-	t.Helper()
-	db, err := sql.Open("sqlite", ":memory:")
-	if err != nil {
-		t.Fatalf("open: %v", err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-	if err := Migrate(db); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
-	return db
-}
-
 // insertRawLog inserts a request_logs row directly, bypassing the normal
 // InsertRequestLog helper so we can simulate legacy data with any provider_type.
 func insertRawLog(t *testing.T, db *sql.DB, requestID, providerType string, input, output, cached, cacheWrite, total int64) {
