@@ -13,6 +13,7 @@ import {
   MoreHorizontal,
   GitBranch,
   X,
+  Search,
 } from 'lucide-react'
 import { Modal } from '@/components/ui/Modal'
 import { GlassCard } from '@/components/ui/GlassCard'
@@ -434,12 +435,19 @@ function FetchModelsModal({
   const [fetching, setFetching] = useState(false)
   const [importing, setImporting] = useState(false)
   const [fetchError, setFetchError] = useState('')
+  const [search, setSearch] = useState('')
   const autoFetchStartedRef = useRef(false)
 
   const existingNames = useMemo(
     () => new Set(existingModels.map((m) => m.model_name)),
     [existingModels],
   )
+
+  const filteredModels = useMemo(() => {
+    const q = search.trim().toLowerCase()
+    if (!q) return fetchedModels
+    return fetchedModels.filter((name) => name.toLowerCase().includes(q))
+  }, [fetchedModels, search])
 
   const handleFetch = async () => {
     setFetching(true)
@@ -556,39 +564,70 @@ function FetchModelsModal({
                     {t('providers.noFetchedModels')}
                   </div>
                 ) : (
-                  <div className="max-h-80 overflow-y-auto space-y-1.5 pr-2">
-                    {fetchedModels.map((name) => {
-                      const isExisting = existingNames.has(name)
-                      const isSelected = selected.has(name)
-                      return (
-                        <label
-                          key={name}
-                          className={`
-                            flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer
-                            transition-colors
-                            ${isExisting
-                              ? 'bg-card text-text-muted cursor-not-allowed'
-                              : isSelected
-                                ? 'bg-accent/20 text-text-primary'
-                                : 'hover:bg-card text-text-secondary'
-                            }
-                          `}
+                  <>
+                    {/* Search */}
+                    <div className="relative mb-3">
+                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-muted pointer-events-none" />
+                      <input
+                        type="text"
+                        value={search}
+                        onChange={(e) => setSearch(e.target.value)}
+                        placeholder={t('providers.searchModelsPlaceholder')}
+                        aria-label={t('providers.searchModelsPlaceholder')}
+                        className="w-full pl-10 pr-9 py-2 rounded-xl bg-surface-light border border-surface-border text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-accent/50 focus:border-accent transition-all"
+                      />
+                      {search && (
+                        <button
+                          type="button"
+                          onClick={() => setSearch('')}
+                          aria-label={t('common.clear')}
+                          className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded-md text-text-muted hover:text-text-primary hover:bg-card transition-colors"
                         >
-                          <input
-                            type="checkbox"
-                            checked={isSelected || isExisting}
-                            disabled={isExisting}
-                            onChange={() => toggleModel(name)}
-                            className="accent-accent"
-                          />
-                          <span className="flex-1 truncate text-sm">{name}</span>
-                          {isExisting && (
-                            <Badge variant="info">{t('providers.alreadyAdded')}</Badge>
-                          )}
-                        </label>
-                      )
-                    })}
-                  </div>
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
+
+                    {filteredModels.length === 0 ? (
+                      <div className="h-48 flex items-center justify-center text-text-muted text-sm">
+                        {t('common.noResults')}
+                      </div>
+                    ) : (
+                      <div className="max-h-80 overflow-y-auto space-y-1.5 pr-2">
+                        {filteredModels.map((name) => {
+                          const isExisting = existingNames.has(name)
+                          const isSelected = selected.has(name)
+                          return (
+                            <label
+                              key={name}
+                              className={`
+                                flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer
+                                transition-colors
+                                ${isExisting
+                                  ? 'bg-card text-text-muted cursor-not-allowed'
+                                  : isSelected
+                                    ? 'bg-accent/20 text-text-primary'
+                                    : 'hover:bg-card text-text-secondary'
+                                }
+                              `}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={isSelected || isExisting}
+                                disabled={isExisting}
+                                onChange={() => toggleModel(name)}
+                                className="accent-accent"
+                              />
+                              <span className="flex-1 truncate text-sm">{name}</span>
+                              {isExisting && (
+                                <Badge variant="info">{t('providers.alreadyAdded')}</Badge>
+                              )}
+                            </label>
+                          )
+                        })}
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
       </div>

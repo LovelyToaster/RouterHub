@@ -7,6 +7,7 @@ const zhCN = {
     common: {
       noResults: '无匹配结果',
       searchPlaceholder: '搜索...',
+      clear: '清空',
     },
     nav: {
       dashboard: '仪表盘',
@@ -211,6 +212,7 @@ const zhCN = {
       importing: '导入中...',
       alreadyAdded: '已添加',
       noFetchedModels: '还没有获取模型',
+      searchModelsPlaceholder: '搜索模型...',
       fetchError: '获取失败',
       importError: '导入失败',
       importSuccess: '导入成功',

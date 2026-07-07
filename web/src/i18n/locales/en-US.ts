@@ -7,6 +7,7 @@ const enUS = {
     common: {
       noResults: 'No matches',
       searchPlaceholder: 'Search...',
+      clear: 'Clear',
     },
     nav: {
       dashboard: 'Dashboard',
@@ -211,6 +212,7 @@ const enUS = {
       importing: 'Importing...',
       alreadyAdded: 'Already added',
       noFetchedModels: 'No models found',
+      searchModelsPlaceholder: 'Search models...',
       fetchError: 'Failed to fetch models',
       importError: 'Failed to import models',
       importSuccess: 'Imported',
