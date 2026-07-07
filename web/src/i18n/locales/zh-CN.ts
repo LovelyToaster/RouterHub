@@ -4,6 +4,10 @@ const zhCN = {
       name: 'RouterHub',
       loading: '加载中...',
     },
+    common: {
+      noResults: '无匹配结果',
+      searchPlaceholder: '搜索...',
+    },
     nav: {
       dashboard: '仪表盘',
       requests: '请求日志',

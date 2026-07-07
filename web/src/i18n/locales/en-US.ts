@@ -4,6 +4,10 @@ const enUS = {
       name: 'RouterHub',
       loading: 'Loading...',
     },
+    common: {
+      noResults: 'No matches',
+      searchPlaceholder: 'Search...',
+    },
     nav: {
       dashboard: 'Dashboard',
       requests: 'Requests',

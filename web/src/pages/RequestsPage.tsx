@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next'
 import { Search, ChevronLeft, ChevronRight, RefreshCw } from 'lucide-react'
 import { GlassCard } from '@/components/ui/GlassCard'
 import { Badge } from '@/components/ui/Badge'
+import { Select } from '@/components/ui/Select'
 import { listRequestLogs } from '@/api/client'
 import { useUserTimezone } from '@/hooks/useUserTimezone'
 import { formatCompact, formatMs, formatPercent } from '@/lib/format'
@@ -118,20 +119,16 @@ export function RequestsPage() {
             </button>
 
             {/* Page size */}
-            <label className="flex items-center gap-2">
+            <div className="flex items-center gap-2">
               <span className="text-text-muted">{t('requests.pageSize')}</span>
-              <select
-                value={pageSize}
+              <Select
+                size="sm"
+                value={String(pageSize)}
                 onChange={(e) => handlePageSizeChange(Number(e.target.value))}
-                className="rounded-lg bg-surface-light border border-surface-border px-2 py-1 text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-accent/50 focus:border-accent transition-all"
-              >
-                {PAGE_SIZE_OPTIONS.map((n) => (
-                  <option key={n} value={n}>
-                    {n}
-                  </option>
-                ))}
-              </select>
-            </label>
+                options={PAGE_SIZE_OPTIONS.map((n) => ({ value: String(n), label: String(n) }))}
+                className="w-20"
+              />
+            </div>
 
             {/* Pagination */}
             <div className="flex items-center gap-1">
