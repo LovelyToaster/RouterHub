@@ -1,12 +1,13 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { Search, ChevronLeft, ChevronRight, RefreshCw } from 'lucide-react'
+import { Search, ChevronLeft, ChevronRight } from 'lucide-react'
 import { GlassCard } from '@/components/ui/GlassCard'
 import { Badge } from '@/components/ui/Badge'
 import { Select } from '@/components/ui/Select'
 import { listRequestLogs } from '@/api/client'
 import { useUserTimezone } from '@/hooks/useUserTimezone'
+import { useRequestLogsStream } from '@/hooks/useRequestLogsStream'
 import { formatCompact, formatMs, formatPercent } from '@/lib/format'
 import type { RequestLog } from '@/types'
 
@@ -51,10 +52,15 @@ export function RequestsPage() {
   const [search, setSearch] = useState('')
   const { tz } = useUserTimezone()
 
-  const { data: logs, isLoading, isFetching, refetch } = useQuery<RequestLog[]>({
+  const { data: logs, isLoading, refetch } = useQuery<RequestLog[]>({
     queryKey: ['request-logs', pageSize, offset],
     queryFn: () => listRequestLogs(pageSize, offset),
-    refetchInterval: 10000,
+  })
+
+  // Live updates: the backend publishes a lightweight event whenever a
+  // request log row is inserted (pending) or updated (success/error).
+  useRequestLogsStream(() => {
+    refetch()
   })
 
   const filteredLogs = logs?.filter((log) => {
@@ -108,16 +114,6 @@ export function RequestsPage() {
           </div>
 
           <div className="flex items-center gap-3 text-sm text-text-secondary">
-            {/* Refresh */}
-            <button
-              onClick={() => refetch()}
-              disabled={isFetching}
-              title={t('requests.refresh')}
-              className="p-1.5 rounded-lg hover:bg-card disabled:opacity-40 transition-colors"
-            >
-              <RefreshCw className={`w-4 h-4 ${isFetching ? 'animate-spin' : ''}`} />
-            </button>
-
             {/* Page size */}
             <div className="flex items-center gap-2">
               <span className="text-text-muted">{t('requests.pageSize')}</span>

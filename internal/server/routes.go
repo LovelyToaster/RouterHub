@@ -81,6 +81,7 @@ func New(db *sql.DB, cfg *config.Config) http.Handler {
 
 			// Request Logs
 			r.Get("/request-logs", adminHandler.ListRequestLogs)
+			r.Get("/request-logs/stream", adminHandler.RequestLogsStream)
 
 			// Provider Models CRUD
 			r.Get("/providers/{id}/models", adminHandler.ListProviderModels)

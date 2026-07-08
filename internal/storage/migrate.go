@@ -130,6 +130,13 @@ func Migrate(db *sql.DB) error {
 		return fmt.Errorf("data migration: %w", err)
 	}
 
+	// Reap any "pending" rows left over from a previous run that never got to
+	// finalize (crash, forced shutdown, etc.). Best-effort: failures here
+	// should not block startup.
+	if err := MarkPendingLogsAsError(db, "server restarted before request finished"); err != nil {
+		fmt.Printf("cleanup pending request logs: %v\n", err)
+	}
+
 	return nil
 }
 

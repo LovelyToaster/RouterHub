@@ -20,14 +20,32 @@ func InsertRequestLog(db *sql.DB, log *RequestLog) error {
 	return nil
 }
 
+// UpdateRequestLog overwrites all mutable fields of an existing request log
+// identified by RequestID. Used by the two-phase logging pipeline to finalize
+// a "pending" row with success/error status plus timing and usage stats.
 func UpdateRequestLog(db *sql.DB, log *RequestLog) error {
 	_, err := db.Exec(
-		`UPDATE request_logs SET status=?, error_message=?, finished_at=?, time_to_first_token_ms=?, total_duration_ms=?, input_tokens=?, output_tokens=?, cached_tokens=?, cache_write_tokens=?, total_tokens=? WHERE request_id=?`,
-		log.Status, log.ErrorMessage, log.FinishedAt, log.TimeToFirstTokenMs, log.TotalDurationMs,
+		`UPDATE request_logs SET actual_model=?, status=?, error_message=?, finished_at=?, time_to_first_token_ms=?, total_duration_ms=?, input_tokens=?, output_tokens=?, cached_tokens=?, cache_write_tokens=?, total_tokens=? WHERE request_id=?`,
+		log.ActualModel, log.Status, log.ErrorMessage, log.FinishedAt, log.TimeToFirstTokenMs, log.TotalDurationMs,
 		log.InputTokens, log.OutputTokens, log.CachedTokens, log.CacheWriteTokens, log.TotalTokens, log.RequestID,
 	)
 	if err != nil {
 		return fmt.Errorf("update request log: %w", err)
+	}
+	return nil
+}
+
+// MarkPendingLogsAsError transitions any leftover "pending" rows to "error".
+// Called during startup so that logs abandoned by an interrupted process
+// (crash, forced shutdown) do not stay stuck on "processing" forever.
+func MarkPendingLogsAsError(db *sql.DB, message string) error {
+	now := Now()
+	_, err := db.Exec(
+		`UPDATE request_logs SET status='error', error_message=?, finished_at=COALESCE(finished_at, ?) WHERE status='pending'`,
+		message, now,
+	)
+	if err != nil {
+		return fmt.Errorf("mark pending request logs as error: %w", err)
 	}
 	return nil
 }

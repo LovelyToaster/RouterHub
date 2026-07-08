@@ -50,7 +50,7 @@ go test ./...
 
 ## API 端点
 
-- Admin（Bearer session token）：`/api/auth/*`、`/api/providers`、`/api/model-aliases`、`/api/gateway-keys`、`/api/settings`、`/api/stats/summary`、`/api/stats/summary/stream`（SSE）、`/api/request-logs`、`/api/system/info`
+- Admin（Bearer session token）：`/api/auth/*`、`/api/providers`、`/api/model-aliases`、`/api/gateway-keys`、`/api/settings`、`/api/stats/summary`、`/api/stats/summary/stream`（SSE）、`/api/request-logs`、`/api/request-logs/stream`（SSE）、`/api/system/info`
 - 网关（`Authorization: Bearer rh-...`）：`/v1/chat/completions`、`/v1/responses`、`/v1/messages`
 - SPA 静态资源走 `internal/webui/dist`，`chi.NotFound` 兜底
 

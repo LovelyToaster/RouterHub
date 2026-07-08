@@ -893,6 +893,74 @@ func (h *AdminHandler) ListRequestLogs(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, logs)
 }
 
+// RequestLogsStream notifies the client whenever a request log is inserted or
+// updated via Server-Sent Events. The payload is intentionally empty (the
+// frontend simply re-fetches its list); this keeps the server side simple and
+// lets the client apply its own paging/filter.
+func (h *AdminHandler) RequestLogsStream(w http.ResponseWriter, r *http.Request) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		writeError(w, http.StatusInternalServerError, "streaming unsupported")
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+
+	sendUpdate := func() bool {
+		if _, err := fmt.Fprintf(w, "event: update\ndata: {}\n\n"); err != nil {
+			return false
+		}
+		flusher.Flush()
+		return true
+	}
+
+	// Prime the connection so the client knows the stream is live.
+	if !sendUpdate() {
+		return
+	}
+
+	sub := events.Global.Subscribe()
+	defer events.Global.Unsubscribe(sub)
+
+	ctx := r.Context()
+	heartbeat := time.NewTicker(15 * time.Second)
+	defer heartbeat.Stop()
+	throttle := 200 * time.Millisecond
+	var lastPush time.Time
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-sub:
+			if wait := throttle - time.Since(lastPush); wait > 0 {
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(wait):
+				}
+			}
+			// Coalesce any events accumulated during the throttle window.
+			select {
+			case <-sub:
+			default:
+			}
+			if !sendUpdate() {
+				return
+			}
+			lastPush = time.Now()
+		case <-heartbeat.C:
+			if _, err := fmt.Fprintf(w, ": ping\n\n"); err != nil {
+				return
+			}
+			flusher.Flush()
+		}
+	}
+}
+
 // --- Provider Models CRUD ---
 
 func (h *AdminHandler) ListProviderModels(w http.ResponseWriter, r *http.Request) {

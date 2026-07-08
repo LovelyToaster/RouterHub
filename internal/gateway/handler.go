@@ -71,7 +71,10 @@ func (h *GatewayHandler) handleProxy(w http.ResponseWriter, r *http.Request, inb
 		return
 	}
 
-	// Create log entry
+	// Create pending log entry and persist immediately so the UI can show the
+	// request as "processing" while it flows through. The finalize call at the
+	// end of this function updates the same row with success/error status,
+	// timings and usage stats.
 	requestID := uuid.New().String()
 	now := storage.Now()
 	logEntry := &storage.RequestLog{
@@ -88,6 +91,11 @@ func (h *GatewayHandler) handleProxy(w http.ResponseWriter, r *http.Request, inb
 	if key := GetGatewayKeyFromContext(r.Context()); key != nil {
 		logEntry.GatewayAPIKeyName = key.Name
 	}
+	InsertPendingRequestLog(h.DB, logEntry)
+	// Deferred so that a panic inside ProxyRequest / ConvertedProxyRequest
+	// (recovered by chi's middleware) still finalizes the log row instead of
+	// leaving it stuck on "pending" until the next process restart.
+	defer FinalizeRequestLog(h.DB, logEntry)
 
 	// Check protocol compatibility
 	if inboundProtocol != selected.Provider.Type {
@@ -97,9 +105,6 @@ func (h *GatewayHandler) handleProxy(w http.ResponseWriter, r *http.Request, inb
 		// Same protocol - proxy through
 		ProxyRequest(w, r, selected, inboundProtocol, logEntry, stream)
 	}
-
-	// Save log (best effort)
-	SaveRequestLog(h.DB, logEntry)
 }
 
 // parseRequestBody extracts model and stream flag from the JSON body.

@@ -46,6 +46,7 @@ func ProxyRequest(w http.ResponseWriter, r *http.Request, selected *SelectedProv
 	// Read body
 	bodyBytes, err := io.ReadAll(r.Body)
 	if err != nil {
+		setLogError(logEntry, err.Error())
 		writeError(w, http.StatusInternalServerError, "failed to read request body")
 		return
 	}
@@ -54,6 +55,7 @@ func ProxyRequest(w http.ResponseWriter, r *http.Request, selected *SelectedProv
 	// Replace model in body
 	modifiedBody, err := replaceModelInBody(bodyBytes, selected.ProviderModel)
 	if err != nil {
+		setLogError(logEntry, err.Error())
 		writeError(w, http.StatusInternalServerError, "failed to modify request body")
 		return
 	}
@@ -61,6 +63,7 @@ func ProxyRequest(w http.ResponseWriter, r *http.Request, selected *SelectedProv
 	// Create outgoing request
 	outReq, err := http.NewRequestWithContext(r.Context(), r.Method, targetURL, bytes.NewReader(modifiedBody))
 	if err != nil {
+		setLogError(logEntry, err.Error())
 		writeError(w, http.StatusInternalServerError, "failed to create request")
 		return
 	}
@@ -243,6 +246,7 @@ func ConvertedProxyRequest(w http.ResponseWriter, r *http.Request, selected *Sel
 	// Read body
 	bodyBytes, err := io.ReadAll(r.Body)
 	if err != nil {
+		setLogError(logEntry, err.Error())
 		writeError(w, http.StatusInternalServerError, "failed to read request body")
 		return
 	}
@@ -251,6 +255,7 @@ func ConvertedProxyRequest(w http.ResponseWriter, r *http.Request, selected *Sel
 	// Replace model in body first
 	modifiedBody, err := replaceModelInBody(bodyBytes, selected.ProviderModel)
 	if err != nil {
+		setLogError(logEntry, err.Error())
 		writeError(w, http.StatusInternalServerError, "failed to modify request body")
 		return
 	}
@@ -258,11 +263,8 @@ func ConvertedProxyRequest(w http.ResponseWriter, r *http.Request, selected *Sel
 	// Convert request body from inbound protocol to provider protocol
 	convertedBody, err := convert.ConvertRequest(modifiedBody, inboundProtocol, selected.Provider.Type)
 	if err != nil {
-		logEntry.Status = "error"
 		errMsg := fmt.Sprintf("request conversion failed: %v", err)
-		logEntry.ErrorMessage = &errMsg
-		finishedAt := storage.Now()
-		logEntry.FinishedAt = &finishedAt
+		setLogError(logEntry, errMsg)
 		writeError(w, http.StatusBadRequest, errMsg)
 		return
 	}
@@ -270,6 +272,7 @@ func ConvertedProxyRequest(w http.ResponseWriter, r *http.Request, selected *Sel
 	// Create outgoing request
 	outReq, err := http.NewRequestWithContext(r.Context(), r.Method, targetURL, bytes.NewReader(convertedBody))
 	if err != nil {
+		setLogError(logEntry, err.Error())
 		writeError(w, http.StatusInternalServerError, "failed to create request")
 		return
 	}
@@ -607,13 +610,61 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
 }
 
-// SaveRequestLog persists the request log entry to the database.
-func SaveRequestLog(db *sql.DB, logEntry *storage.RequestLog) {
-	if err := storage.InsertRequestLog(db, logEntry); err != nil {
-		// Log failure but don't block the response
-		fmt.Printf("Failed to save request log: %v\n", err)
+// setLogError marks the log entry as an error with the given message and, when
+// provided, records a finished_at timestamp. Safe to call multiple times; the
+// latest call wins.
+func setLogError(logEntry *storage.RequestLog, msg string) {
+	if logEntry == nil {
 		return
 	}
-	// Notify subscribers (e.g., dashboard SSE) of stats change.
+	logEntry.Status = "error"
+	m := msg
+	logEntry.ErrorMessage = &m
+}
+
+// InsertPendingRequestLog persists a freshly-created log row in "pending"
+// state. Errors are logged but not returned so the request flow is never
+// blocked by logging infrastructure issues.
+func InsertPendingRequestLog(db *sql.DB, logEntry *storage.RequestLog) {
+	if err := storage.InsertRequestLog(db, logEntry); err != nil {
+		fmt.Printf("Failed to insert pending request log: %v\n", err)
+		return
+	}
+	events.Global.Publish()
+}
+
+// FinalizeRequestLog updates the previously-inserted pending row with the
+// final status/timings/usage carried on logEntry. If Status is somehow still
+// "pending" here (missing branch or a recovered panic), fall back to "error"
+// with a diagnostic message so we never leave a row stuck as "processing".
+// Also fills in FinishedAt and TotalDurationMs when the handler forgot.
+func FinalizeRequestLog(db *sql.DB, logEntry *storage.RequestLog) {
+	if logEntry.Status == "pending" {
+		logEntry.Status = "error"
+		msg := "status not finalized"
+		logEntry.ErrorMessage = &msg
+	}
+	if logEntry.FinishedAt == nil {
+		now := storage.Now()
+		logEntry.FinishedAt = &now
+	}
+	// Reconstruct total_duration_ms from created_at/finished_at when the
+	// handler left it nil (e.g. an early-return error path). Without this,
+	// error rows would have NULL duration which hurts triage.
+	if logEntry.TotalDurationMs == nil && logEntry.FinishedAt != nil {
+		if created, err := time.Parse(time.RFC3339, logEntry.CreatedAt); err == nil {
+			if finished, err := time.Parse(time.RFC3339, *logEntry.FinishedAt); err == nil {
+				ms := finished.Sub(created).Milliseconds()
+				if ms < 0 {
+					ms = 0
+				}
+				logEntry.TotalDurationMs = &ms
+			}
+		}
+	}
+	if err := storage.UpdateRequestLog(db, logEntry); err != nil {
+		fmt.Printf("Failed to finalize request log: %v\n", err)
+		return
+	}
 	events.Global.Publish()
 }
