@@ -8,9 +8,9 @@ import (
 
 func InsertRequestLog(db *sql.DB, log *RequestLog) error {
 	_, err := db.Exec(
-		`INSERT INTO request_logs (request_id, provider_name, provider_type, requested_model, actual_model, stream, status, error_message, created_at, finished_at, time_to_first_token_ms, total_duration_ms, input_tokens, output_tokens, cached_tokens, cache_write_tokens, total_tokens, client_ip, gateway_api_key_name)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		log.RequestID, log.ProviderName, log.ProviderType, log.RequestedModel, log.ActualModel,
+		`INSERT INTO request_logs (request_id, provider_name, provider_type, inbound_protocol, requested_model, actual_model, stream, status, error_message, created_at, finished_at, time_to_first_token_ms, total_duration_ms, input_tokens, output_tokens, cached_tokens, cache_write_tokens, total_tokens, client_ip, gateway_api_key_name)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		log.RequestID, log.ProviderName, log.ProviderType, log.InboundProtocol, log.RequestedModel, log.ActualModel,
 		boolToInt(log.Stream), log.Status, log.ErrorMessage, log.CreatedAt, log.FinishedAt,
 		log.TimeToFirstTokenMs, log.TotalDurationMs, log.InputTokens, log.OutputTokens, log.CachedTokens, log.CacheWriteTokens, log.TotalTokens, log.ClientIP, log.GatewayAPIKeyName,
 	)
@@ -60,7 +60,7 @@ func ListRequestLogs(db *sql.DB, filter RequestLogFilter) ([]RequestLog, error) 
 		filter.Limit = 50
 	}
 	rows, err := db.Query(
-		`SELECT id, request_id, provider_name, provider_type, requested_model, actual_model, stream, status, error_message, created_at, finished_at, time_to_first_token_ms, total_duration_ms, input_tokens, output_tokens, cached_tokens, cache_write_tokens, total_tokens, client_ip, gateway_api_key_name
+		`SELECT id, request_id, provider_name, provider_type, inbound_protocol, requested_model, actual_model, stream, status, error_message, created_at, finished_at, time_to_first_token_ms, total_duration_ms, input_tokens, output_tokens, cached_tokens, cache_write_tokens, total_tokens, client_ip, gateway_api_key_name
 		 FROM request_logs ORDER BY created_at DESC LIMIT ? OFFSET ?`,
 		filter.Limit, filter.Offset,
 	)
@@ -72,7 +72,7 @@ func ListRequestLogs(db *sql.DB, filter RequestLogFilter) ([]RequestLog, error) 
 	var logs []RequestLog
 	for rows.Next() {
 		var l RequestLog
-		if err := rows.Scan(&l.ID, &l.RequestID, &l.ProviderName, &l.ProviderType, &l.RequestedModel, &l.ActualModel,
+		if err := rows.Scan(&l.ID, &l.RequestID, &l.ProviderName, &l.ProviderType, &l.InboundProtocol, &l.RequestedModel, &l.ActualModel,
 			&l.Stream, &l.Status, &l.ErrorMessage, &l.CreatedAt, &l.FinishedAt,
 			&l.TimeToFirstTokenMs, &l.TotalDurationMs, &l.InputTokens, &l.OutputTokens, &l.CachedTokens, &l.CacheWriteTokens, &l.TotalTokens, &l.ClientIP, &l.GatewayAPIKeyName); err != nil {
 			return nil, fmt.Errorf("scan request log: %w", err)

@@ -78,15 +78,16 @@ func (h *GatewayHandler) handleProxy(w http.ResponseWriter, r *http.Request, inb
 	requestID := uuid.New().String()
 	now := storage.Now()
 	logEntry := &storage.RequestLog{
-		RequestID:      requestID,
-		ProviderName:   selected.Provider.Name,
-		ProviderType:   selected.Provider.Type,
-		RequestedModel: model,
-		ActualModel:    selected.ProviderModel,
-		Stream:         stream,
-		Status:         "pending",
-		CreatedAt:      now,
-		ClientIP:       extractClientIP(r),
+		RequestID:        requestID,
+		ProviderName:     selected.Provider.Name,
+		ProviderType:     selected.Provider.Type,
+		InboundProtocol:  inboundProtocol,
+		RequestedModel:   model,
+		ActualModel:      selected.ProviderModel,
+		Stream:           stream,
+		Status:           "pending",
+		CreatedAt:        now,
+		ClientIP:         extractClientIP(r),
 	}
 	if key := GetGatewayKeyFromContext(r.Context()); key != nil {
 		logEntry.GatewayAPIKeyName = key.Name

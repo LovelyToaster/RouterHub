@@ -62,7 +62,7 @@ go test ./...
 - `gateway_api_keys`：`crypto/rand` 生成 `rh-` + 43 字符 base64 URL-safe；`name` 必填
 - `admin_users`：单条；`timezone` 空触发浏览器 IANA 回写
 - `admin_sessions`：Bearer Token
-- `request_logs`：含 `client_ip / gateway_api_key_name / cache_write_tokens`
+- `request_logs`：含 `client_ip / gateway_api_key_name / cache_write_tokens / inbound_protocol`（`inbound_protocol` 为客户端入站协议；跨协议转换时与上游 `provider_type` 不同）
 
 ## 修改流程
 

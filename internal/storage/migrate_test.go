@@ -13,11 +13,11 @@ func insertRawLog(t *testing.T, db *sql.DB, requestID, providerType string, inpu
 	t.Helper()
 	_, err := db.Exec(`
 		INSERT INTO request_logs (
-			request_id, provider_name, provider_type, requested_model, actual_model,
+			request_id, provider_name, provider_type, inbound_protocol, requested_model, actual_model,
 			stream, status, created_at, input_tokens, output_tokens,
 			cached_tokens, cache_write_tokens, total_tokens
-		) VALUES (?, ?, ?, ?, ?, 0, 'success', '2026-01-01T00:00:00Z', ?, ?, ?, ?, ?)
-	`, requestID, "p", providerType, "m", "m", input, output, cached, cacheWrite, total)
+		) VALUES (?, ?, ?, ?, ?, ?, 0, 'success', '2026-01-01T00:00:00Z', ?, ?, ?, ?, ?)
+	`, requestID, "p", providerType, providerType, "m", "m", input, output, cached, cacheWrite, total)
 	if err != nil {
 		t.Fatalf("insert: %v", err)
 	}

@@ -75,6 +75,7 @@ type RequestLog struct {
 	RequestID          string  `json:"request_id"`
 	ProviderName       string  `json:"provider_name"`
 	ProviderType       string  `json:"provider_type"`
+	InboundProtocol    string  `json:"inbound_protocol"`
 	RequestedModel     string  `json:"requested_model"`
 	ActualModel        string  `json:"actual_model"`
 	Stream             bool    `json:"stream"`

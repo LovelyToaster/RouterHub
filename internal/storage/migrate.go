@@ -83,6 +83,7 @@ func Migrate(db *sql.DB) error {
 			request_id TEXT NOT NULL UNIQUE,
 			provider_name TEXT NOT NULL,
 			provider_type TEXT NOT NULL,
+			inbound_protocol TEXT NOT NULL DEFAULT '',
 			requested_model TEXT NOT NULL,
 			actual_model TEXT NOT NULL,
 			stream INTEGER NOT NULL DEFAULT 0,
@@ -126,6 +127,10 @@ func Migrate(db *sql.DB) error {
 		}
 	}
 
+	if err := ensureRequestLogsInboundProtocol(db); err != nil {
+		return fmt.Errorf("ensure inbound_protocol column: %w", err)
+	}
+
 	if err := runDataMigrations(db); err != nil {
 		return fmt.Errorf("data migration: %w", err)
 	}
@@ -140,18 +145,94 @@ func Migrate(db *sql.DB) error {
 	return nil
 }
 
+// ensureRequestLogsInboundProtocol checks whether the inbound_protocol column
+// exists on request_logs and adds it via ALTER TABLE if not. This handles the
+// case where the database was created before the column was added to the schema.
+func ensureRequestLogsInboundProtocol(db *sql.DB) error {
+	rows, err := db.Query(`PRAGMA table_info(request_logs)`)
+	if err != nil {
+		return fmt.Errorf("pragma table_info: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var cid int
+		var name, ctype string
+		var notnull int
+		var dflt sql.NullString
+		var pk int
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+			return fmt.Errorf("scan pragma row: %w", err)
+		}
+		if name == "inbound_protocol" {
+			return nil // column already exists
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	_, err = db.Exec(`ALTER TABLE request_logs ADD COLUMN inbound_protocol TEXT NOT NULL DEFAULT ''`)
+	if err != nil {
+		return fmt.Errorf("alter table add column: %w", err)
+	}
+	return nil
+}
+
 // runDataMigrations executes one-off data-normalisation SQL. Each migration is
 // keyed in app_settings and only runs once per database.
 func runDataMigrations(db *sql.DB) error {
-	const key = "data_migration_normalize_anthropic_input_tokens_v1"
+	migrations := []struct {
+		key  string
+		exec func(tx *sql.Tx) error
+	}{
+		{
+			key: "data_migration_normalize_anthropic_input_tokens_v1",
+			exec: func(tx *sql.Tx) error {
+				// Historically we stored Anthropic's raw input_tokens (which excludes cache
+				// reads/writes) verbatim. Normalise those rows so that input_tokens ==
+				// "total input tokens including cache reads/writes", matching how we now
+				// record fresh Anthropic requests and mirroring the OpenAI convention.
+				// SQLite evaluates all SET expressions against the row's original values,
+				// so the total_tokens expression still sees the pre-update input_tokens.
+				// NB: provider_type stores the protocol constant (see internal/protocol),
+				// which for Anthropic is "anthropic-messages" — not the bare "anthropic".
+				_, err := tx.Exec(`
+					UPDATE request_logs
+					   SET input_tokens = input_tokens + cached_tokens + cache_write_tokens,
+					       total_tokens = input_tokens + cached_tokens + cache_write_tokens + output_tokens
+					 WHERE provider_type = 'anthropic-messages'
+				`)
+				return err
+			},
+		},
+		{
+			key: "data_migration_backfill_inbound_protocol_v1",
+			exec: func(tx *sql.Tx) error {
+				_, err := tx.Exec(`UPDATE request_logs SET inbound_protocol = provider_type WHERE inbound_protocol = ''`)
+				return err
+			},
+		},
+	}
 
+	for _, m := range migrations {
+		if err := runMigrationOnce(db, m.key, m.exec); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// runMigrationOnce runs exec inside a transaction and records the migration key
+// in app_settings so it only ever runs once per database.
+func runMigrationOnce(db *sql.DB, key string, exec func(tx *sql.Tx) error) error {
 	var existing string
 	err := db.QueryRow(`SELECT value FROM app_settings WHERE key = ?`, key).Scan(&existing)
 	if err == nil {
 		return nil // already applied
 	}
 	if err != sql.ErrNoRows {
-		return fmt.Errorf("check migration flag: %w", err)
+		return fmt.Errorf("check migration flag %s: %w", key, err)
 	}
 
 	tx, err := db.Begin()
@@ -160,21 +241,8 @@ func runDataMigrations(db *sql.DB) error {
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	// Historically we stored Anthropic's raw input_tokens (which excludes cache
-	// reads/writes) verbatim. Normalise those rows so that input_tokens ==
-	// "total input tokens including cache reads/writes", matching how we now
-	// record fresh Anthropic requests and mirroring the OpenAI convention.
-	// SQLite evaluates all SET expressions against the row's original values,
-	// so the total_tokens expression still sees the pre-update input_tokens.
-	// NB: provider_type stores the protocol constant (see internal/protocol),
-	// which for Anthropic is "anthropic-messages" — not the bare "anthropic".
-	if _, err := tx.Exec(`
-		UPDATE request_logs
-		   SET input_tokens = input_tokens + cached_tokens + cache_write_tokens,
-		       total_tokens = input_tokens + cached_tokens + cache_write_tokens + output_tokens
-		 WHERE provider_type = 'anthropic-messages'
-	`); err != nil {
-		return fmt.Errorf("normalise anthropic input tokens: %w", err)
+	if err := exec(tx); err != nil {
+		return fmt.Errorf("migration %s: %w", key, err)
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339)
@@ -182,7 +250,7 @@ func runDataMigrations(db *sql.DB) error {
 		`INSERT INTO app_settings (key, value, updated_at) VALUES (?, ?, ?)`,
 		key, now, now,
 	); err != nil {
-		return fmt.Errorf("record migration flag: %w", err)
+		return fmt.Errorf("record migration flag %s: %w", key, err)
 	}
 
 	return tx.Commit()

@@ -70,6 +70,8 @@ export function RequestsPage() {
       log.requested_model.toLowerCase().includes(q) ||
       log.actual_model.toLowerCase().includes(q) ||
       log.provider_name.toLowerCase().includes(q) ||
+      log.provider_type.toLowerCase().includes(q) ||
+      log.inbound_protocol.toLowerCase().includes(q) ||
       log.request_id.toLowerCase().includes(q) ||
       (log.client_ip ?? '').toLowerCase().includes(q) ||
       (log.gateway_api_key_name ?? '').toLowerCase().includes(q)
@@ -195,7 +197,16 @@ export function RequestsPage() {
                           }
                         />
                       </td>
-                      <td className="px-3 py-3 text-text-secondary">{log.provider_type}</td>
+                      <td className="px-3 py-3">
+                        <Cell
+                          main={log.inbound_protocol || log.provider_type}
+                          sub={
+                            log.inbound_protocol && log.inbound_protocol !== log.provider_type
+                              ? `→ ${log.provider_type}`
+                              : undefined
+                          }
+                        />
+                      </td>
                       <td className="px-3 py-3 text-text-secondary">
                         {log.stream ? t('requests.streamYes') : t('requests.streamNo')}
                       </td>

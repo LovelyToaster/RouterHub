@@ -47,6 +47,7 @@ export interface RequestLog {
   request_id: string
   provider_name: string
   provider_type: string
+  inbound_protocol: string
   requested_model: string
   actual_model: string
   stream: boolean
