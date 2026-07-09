@@ -1,5 +1,10 @@
 package convert
 
+import (
+	"fmt"
+	"strings"
+)
+
 // --- Chat Response -> Anthropic Response ---
 
 func convertChatResponseToAnthropic(resp map[string]any) map[string]any {
@@ -25,6 +30,20 @@ func convertChatResponseToAnthropic(resp map[string]any) map[string]any {
 		if choice, ok := choices[0].(map[string]any); ok {
 			message := getMap(choice, "message")
 			if message != nil {
+				// Reasoning content -> thinking block
+				reasoningContent := getString(message, "reasoning_content")
+				reasoningSignature := getString(message, "reasoning_signature")
+				if reasoningContent != "" {
+					thinkingBlock := map[string]any{
+						"type":     "thinking",
+						"thinking": reasoningContent,
+					}
+					if reasoningSignature != "" {
+						thinkingBlock["signature"] = reasoningSignature
+					}
+					content = append(content, thinkingBlock)
+				}
+
 				// Text content
 				if text := getString(message, "content"); text != "" {
 					content = append(content, map[string]any{
@@ -125,6 +144,8 @@ func convertAnthropicResponseToChat(resp map[string]any) map[string]any {
 	content := resp["content"]
 	var text string
 	var toolCalls []any
+	var reasoningParts []string
+	var reasoningSignature string
 
 	switch c := content.(type) {
 	case string:
@@ -138,6 +159,11 @@ func convertAnthropicResponseToChat(resp map[string]any) map[string]any {
 			switch getString(p, "type") {
 			case "text":
 				text += getString(p, "text")
+			case "thinking":
+				reasoningParts = append(reasoningParts, getString(p, "thinking"))
+				if sig := getString(p, "signature"); sig != "" {
+					reasoningSignature = sig
+				}
 			case "tool_use":
 				toolCalls = append(toolCalls, map[string]any{
 					"id":   getString(p, "id"),
@@ -154,6 +180,12 @@ func convertAnthropicResponseToChat(resp map[string]any) map[string]any {
 	message["content"] = text
 	if len(toolCalls) > 0 {
 		message["tool_calls"] = toolCalls
+	}
+	if len(reasoningParts) > 0 {
+		message["reasoning_content"] = strings.Join(reasoningParts, "\n")
+		if reasoningSignature != "" {
+			message["reasoning_signature"] = reasoningSignature
+		}
 	}
 	choice["message"] = message
 
@@ -218,6 +250,27 @@ func convertChatResponseToResponses(resp map[string]any) map[string]any {
 			message := getMap(choice, "message")
 			if message != nil {
 				var output []any
+
+				// Reasoning content -> reasoning output item
+				reasoningContent := getString(message, "reasoning_content")
+				reasoningSignature := getString(message, "reasoning_signature")
+				if reasoningContent != "" {
+					reasoningItem := map[string]any{
+						"id":     "rs_response",
+						"type":   "reasoning",
+						"status": "completed",
+						"content": []any{
+							map[string]any{
+								"type": "reasoning_text",
+								"text": reasoningContent,
+							},
+						},
+					}
+					if reasoningSignature != "" {
+						reasoningItem["encrypted_content"] = reasoningSignature
+					}
+					output = append(output, reasoningItem)
+				}
 
 				// Text content
 				if text := getString(message, "content"); text != "" {
@@ -334,6 +387,7 @@ func convertAnthropicResponseToResponses(resp map[string]any) map[string]any {
 		}
 	case []any:
 		var text string
+		var thinkingIdx int
 		for _, part := range c {
 			p, ok := part.(map[string]any)
 			if !ok {
@@ -342,6 +396,20 @@ func convertAnthropicResponseToResponses(resp map[string]any) map[string]any {
 			switch getString(p, "type") {
 			case "text":
 				text += getString(p, "text")
+			case "thinking":
+				thinkingIdx++
+				reasoningItem := map[string]any{
+					"id":     fmt.Sprintf("rs_response_%d", thinkingIdx),
+					"type":   "reasoning",
+					"status": "completed",
+					"content": []any{
+						map[string]any{"type": "reasoning_text", "text": getString(p, "thinking")},
+					},
+				}
+				if sig := getString(p, "signature"); sig != "" {
+					reasoningItem["encrypted_content"] = sig
+				}
+				output = append(output, reasoningItem)
 			case "tool_use":
 				output = append(output, map[string]any{
 					"type":      "function_call",
@@ -352,8 +420,11 @@ func convertAnthropicResponseToResponses(resp map[string]any) map[string]any {
 				})
 			}
 		}
+		// Append the aggregated text message at the end so that reasoning/tool
+		// items appear before the final assistant message (matches Responses
+		// ordering convention: reasoning -> message).
 		if text != "" {
-			output = append([]any{map[string]any{
+			output = append(output, map[string]any{
 				"type": "message",
 				"role": "assistant",
 				"content": []any{
@@ -362,7 +433,7 @@ func convertAnthropicResponseToResponses(resp map[string]any) map[string]any {
 						"text": text,
 					},
 				},
-			}}, output...)
+			})
 		}
 	}
 
@@ -424,6 +495,8 @@ func convertResponsesResponseToChat(resp map[string]any) map[string]any {
 
 	var text string
 	var toolCalls []any
+	var reasoningParts []string
+	var reasoningSignature string
 
 	// Parse output array
 	if output := getSlice(resp, "output"); len(output) > 0 {
@@ -454,6 +527,17 @@ func convertResponsesResponseToChat(resp map[string]any) map[string]any {
 						"arguments": getString(itemMap, "arguments"),
 					},
 				})
+			case "reasoning":
+				if content := getSlice(itemMap, "content"); len(content) > 0 {
+					if first, ok := content[0].(map[string]any); ok {
+						if getString(first, "type") == "reasoning_text" {
+							reasoningParts = append(reasoningParts, getString(first, "text"))
+						}
+					}
+				}
+				if sig := getString(itemMap, "encrypted_content"); sig != "" {
+					reasoningSignature = sig
+				}
 			}
 		}
 	}
@@ -461,6 +545,12 @@ func convertResponsesResponseToChat(resp map[string]any) map[string]any {
 	message["content"] = text
 	if len(toolCalls) > 0 {
 		message["tool_calls"] = toolCalls
+	}
+	if len(reasoningParts) > 0 {
+		message["reasoning_content"] = strings.Join(reasoningParts, "\n")
+		if reasoningSignature != "" {
+			message["reasoning_signature"] = reasoningSignature
+		}
 	}
 	choice["message"] = message
 
@@ -546,6 +636,25 @@ func convertResponsesResponseToAnthropic(resp map[string]any) map[string]any {
 					"name":  getString(itemMap, "name"),
 					"input": parseJSONString(getString(itemMap, "arguments")),
 				})
+			case "reasoning":
+				thinkingText := ""
+				if c := getSlice(itemMap, "content"); len(c) > 0 {
+					if first, ok := c[0].(map[string]any); ok {
+						if getString(first, "type") == "reasoning_text" {
+							thinkingText = getString(first, "text")
+						}
+					}
+				}
+				if thinkingText != "" {
+					thinkingBlock := map[string]any{
+						"type":     "thinking",
+						"thinking": thinkingText,
+					}
+					if sig := getString(itemMap, "encrypted_content"); sig != "" {
+						thinkingBlock["signature"] = sig
+					}
+					content = append(content, thinkingBlock)
+				}
 			}
 		}
 	}

@@ -371,9 +371,31 @@ func ConvertedProxyRequest(w http.ResponseWriter, r *http.Request, selected *Sel
 	}
 }
 
-// handleConvertedStream handles streaming response with event-by-event conversion.
+// handleConvertedStream handles streaming response with cross-protocol conversion.
+// It uses a state machine (streamState) to generate proper SSE events with
+// lifecycle events, tool-call fragment accumulation, and stream termination.
 func handleConvertedStream(w http.ResponseWriter, resp *http.Response, inboundProtocol, providerType string, logEntry *storage.RequestLog, startTime time.Time) {
-	// Set headers for streaming
+	if resp.StatusCode >= 400 {
+		// For error responses, copy original headers (filtering hop-by-hop)
+		// and forward the body as-is, preserving the original Content-Type.
+		for key, values := range resp.Header {
+			if hopByHopHeaders[key] {
+				continue
+			}
+			for _, v := range values {
+				w.Header().Add(key, v)
+			}
+		}
+		w.WriteHeader(resp.StatusCode)
+		body, _ := io.ReadAll(resp.Body)
+		_, _ = w.Write(body)
+		logEntry.Status = "error"
+		errMsg := fmt.Sprintf("upstream returned status %d", resp.StatusCode)
+		logEntry.ErrorMessage = &errMsg
+		return
+	}
+
+	// Normal SSE streaming: force SSE headers.
 	for key, values := range resp.Header {
 		if hopByHopHeaders[key] {
 			continue
@@ -387,119 +409,63 @@ func handleConvertedStream(w http.ResponseWriter, resp *http.Response, inboundPr
 	w.Header().Set("Connection", "keep-alive")
 	w.WriteHeader(resp.StatusCode)
 
-	if resp.StatusCode >= 400 {
-		// For error responses, just forward the body as-is
-		body, _ := io.ReadAll(resp.Body)
-		_, _ = w.Write(body)
-		logEntry.Status = "error"
-		errMsg := fmt.Sprintf("upstream returned status %d", resp.StatusCode)
-		logEntry.ErrorMessage = &errMsg
-		return
-	}
+	flusher, _ := w.(http.Flusher)
+	state := newStreamState(inboundProtocol, providerType, logEntry.RequestID, logEntry.ActualModel, startTime, logEntry)
 
-	firstChunk := true
-	flusher, canFlush := w.(http.Flusher)
 	scanner := bufio.NewScanner(resp.Body)
 	// Increase buffer for large lines (e.g., tool call arguments)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 
-	var lastUsage *convert.StreamUsage
-
 	for scanner.Scan() {
 		line := scanner.Text()
 
-		// Forward blank lines and comments
-		if line == "" || strings.HasPrefix(line, ":") {
-			if _, err := fmt.Fprintf(w, "%s\n", line); err != nil {
-				break
-			}
-			if canFlush {
-				flusher.Flush()
-			}
+		// Ignore blank lines, comments, and upstream event: lines.
+		if line == "" || strings.HasPrefix(line, ":") || strings.HasPrefix(line, "event:") {
 			continue
 		}
 
-		// Forward event type lines
-		if strings.HasPrefix(line, "event:") {
-			if _, err := fmt.Fprintf(w, "%s\n", line); err != nil {
-				break
-			}
-			if canFlush {
-				flusher.Flush()
-			}
-			continue
-		}
-
-		// Process data lines
 		if strings.HasPrefix(line, "data:") {
 			dataStr := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-
-			// Try to parse usage from the original event (side channel)
+			if dataStr == "[DONE]" {
+				continue // writeStreamEnd handles termination
+			}
+			// Usage side channel
 			if usage := convert.ParseStreamUsage([]byte(dataStr), providerType); usage != nil {
-				lastUsage = usage
+				state.SetUsage(&convert.StreamUsage{
+					InputTokens:      usage.InputTokens,
+					OutputTokens:     usage.OutputTokens,
+					TotalTokens:      usage.TotalTokens,
+					CachedTokens:     usage.CachedTokens,
+					CacheWriteTokens: usage.CacheWriteTokens,
+				})
 			}
-
-			// Convert the event
-			convertedData, err := convert.ConvertStreamEvent([]byte(dataStr), inboundProtocol, providerType)
-			if err != nil {
-				// If conversion fails, skip the event (don't break streaming)
-				continue
-			}
-
-			if convertedData == nil {
-				// Event should be skipped
-				continue
-			}
-
-			// Track first token time
-			if firstChunk {
-				ttft := time.Since(startTime).Milliseconds()
-				logEntry.TimeToFirstTokenMs = &ttft
-				firstChunk = false
-			}
-
-			// Write the converted event
-			if _, err := fmt.Fprintf(w, "data: %s\n\n", string(convertedData)); err != nil {
-				break
-			}
-			if canFlush {
-				flusher.Flush()
-			}
+			state.processUpstreamData(w, flusher, []byte(dataStr))
 			continue
 		}
-
-		// Forward any other lines as-is
-		if _, err := fmt.Fprintf(w, "%s\n", line); err != nil {
-			break
-		}
-		if canFlush {
-			flusher.Flush()
-		}
+		// Other lines silently dropped.
 	}
 
-	// Check for scanner errors
+	state.writeStreamEnd(w, flusher)
+
 	if err := scanner.Err(); err != nil {
 		logEntry.Status = "error"
 		errMsg := fmt.Sprintf("stream read error: %v", err)
 		logEntry.ErrorMessage = &errMsg
-	} else {
+	} else if logEntry.Status != "error" {
 		logEntry.Status = "success"
 	}
 
-	// Record usage from stream if available
-	if lastUsage != nil {
-		logEntry.InputTokens = lastUsage.InputTokens
-		logEntry.OutputTokens = lastUsage.OutputTokens
-		logEntry.TotalTokens = lastUsage.TotalTokens
-		logEntry.CachedTokens = lastUsage.CachedTokens
-		logEntry.CacheWriteTokens = lastUsage.CacheWriteTokens
+	// Persist final usage from state.lastUsage if available.
+	if state.lastUsage != nil {
+		logEntry.InputTokens = state.lastUsage.InputTokens
+		logEntry.OutputTokens = state.lastUsage.OutputTokens
+		logEntry.TotalTokens = state.lastUsage.TotalTokens
+		logEntry.CachedTokens = state.lastUsage.CachedTokens
+		logEntry.CacheWriteTokens = state.lastUsage.CacheWriteTokens
 	}
 
-	// Record total duration
 	durationMs := time.Since(startTime).Milliseconds()
 	logEntry.TotalDurationMs = &durationMs
-
-	// If no first token was recorded, use total duration
 	if logEntry.TimeToFirstTokenMs == nil {
 		logEntry.TimeToFirstTokenMs = &durationMs
 	}

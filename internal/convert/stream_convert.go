@@ -30,6 +30,25 @@ func convertChatStreamToAnthropic(event map[string]any) map[string]any {
 		return nil
 	}
 
+	// Finish chunk (content is empty, finishReason set): emit message_delta so
+	// state machines / clients can react to stream termination.
+	if content == "" && finishReason != "" {
+		stopReason := "end_turn"
+		switch finishReason {
+		case "length":
+			stopReason = "max_tokens"
+		case "tool_calls":
+			stopReason = "tool_use"
+		}
+		return map[string]any{
+			"type": "message_delta",
+			"delta": map[string]any{
+				"stop_reason":   stopReason,
+				"stop_sequence": nil,
+			},
+		}
+	}
+
 	out := make(map[string]any)
 	out["type"] = "content_block_delta"
 	out["index"] = 0
