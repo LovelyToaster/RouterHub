@@ -346,7 +346,14 @@ func ConvertedProxyRequest(w http.ResponseWriter, r *http.Request, selected *Sel
 
 	if stream {
 		// Streaming: convert each SSE event
-		handleConvertedStream(w, resp, inboundProtocol, selected.Provider.Type, logEntry, startTime, convertedBody, bodyCapture)
+		// OpenAI Chat clients must opt in to stream usage via
+		// stream_options.include_usage; pass that through so we don't emit an
+		// unexpected usage block to strict clients.
+		chatIncludeUsage := false
+		if inboundProtocol == protocol.ProtocolChatCompletions {
+			chatIncludeUsage = extractChatIncludeUsage(bodyBytes)
+		}
+		handleConvertedStream(w, resp, inboundProtocol, selected.Provider.Type, logEntry, startTime, convertedBody, bodyCapture, chatIncludeUsage)
 	} else {
 		// Non-streaming: read full body, convert response
 		respBody, readErr := io.ReadAll(resp.Body)
@@ -405,7 +412,7 @@ func ConvertedProxyRequest(w http.ResponseWriter, r *http.Request, selected *Sel
 // handleConvertedStream handles streaming response with cross-protocol conversion.
 // It uses a state machine (streamState) to generate proper SSE events with
 // lifecycle events, tool-call fragment accumulation, and stream termination.
-func handleConvertedStream(w http.ResponseWriter, resp *http.Response, inboundProtocol, providerType string, logEntry *storage.RequestLog, startTime time.Time, reqBody []byte, bodyCapture string) {
+func handleConvertedStream(w http.ResponseWriter, resp *http.Response, inboundProtocol, providerType string, logEntry *storage.RequestLog, startTime time.Time, reqBody []byte, bodyCapture string, chatIncludeUsage bool) {
 	if resp.StatusCode >= 400 {
 		// For error responses, copy original headers (filtering hop-by-hop)
 		// and forward the body as-is, preserving the original Content-Type.
@@ -441,6 +448,12 @@ func handleConvertedStream(w http.ResponseWriter, resp *http.Response, inboundPr
 
 	flusher, _ := w.(http.Flusher)
 	state := newStreamState(inboundProtocol, providerType, logEntry.RequestID, logEntry.ActualModel, startTime, logEntry)
+
+	// OpenAI Chat clients must opt in to stream usage via
+	// stream_options.include_usage; honour it so we don't emit an unexpected
+	// usage block to strict clients. The flag is computed from the inbound
+	// request and passed in by the caller.
+	state.chatIncludeUsage = chatIncludeUsage
 
 	scanner := bufio.NewScanner(resp.Body)
 	// Increase buffer for large lines (e.g., tool call arguments)
@@ -605,6 +618,24 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
+}
+
+// extractChatIncludeUsage reports whether an OpenAI Chat request asked for
+// token usage in the stream via stream_options.include_usage. It is tolerant of
+// malformed/missing JSON and returns false in those cases (OpenAI's default).
+func extractChatIncludeUsage(body []byte) bool {
+	var req map[string]any
+	if err := json.Unmarshal(body, &req); err != nil {
+		return false
+	}
+	so, ok := req["stream_options"].(map[string]any)
+	if !ok {
+		return false
+	}
+	if v, ok := so["include_usage"].(bool); ok {
+		return v
+	}
+	return false
 }
 
 // setLogError marks the log entry as an error with the given message and, when

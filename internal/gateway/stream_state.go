@@ -49,6 +49,18 @@ type streamState struct {
 	// Last known usage (populated by proxy.go via SetUsage).
 	lastUsage *convert.StreamUsage
 
+	// chatIncludeUsage controls whether the Chat downstream receives a usage
+	// chunk. OpenAI only emits stream usage when the client requests it via
+	// stream_options.include_usage; strict clients may reject an unexpected
+	// usage block. It is only meaningful when inbound is Chat.
+	chatIncludeUsage bool
+
+	// preludeInputTokens captures the input token count advertised by an
+	// upstream Anthropic message_start (or set from usage side-channel), so
+	// the downstream Anthropic message_start can report a realistic value
+	// instead of a zero placeholder.
+	preludeInputTokens int64
+
 	// Anthropic pending finish reason (stored from message_delta, used at message_stop).
 	pendingFinishReason string
 
@@ -204,7 +216,7 @@ func (s *streamState) writePrelude(w http.ResponseWriter, flusher http.Flusher) 
 				"stop_reason":    nil,
 				"stop_sequence":  nil,
 				"usage": map[string]any{
-					"input_tokens":  0,
+					"input_tokens":  s.preludeInputTokens,
 					"output_tokens": 0,
 				},
 			},
@@ -801,6 +813,43 @@ func (s *streamState) writeClosure(w http.ResponseWriter, flusher http.Flusher, 
 			},
 		})
 
+		// Inject usage as a final, OpenAI-conventional chunk: empty delta,
+		// null finish_reason, and the usage at the top level. OpenAI only
+		// reports stream usage when the client explicitly opts in via
+		// stream_options.include_usage, so honour that to stay compatible with
+		// strict clients. anthropic/responses downstreams always include usage
+		// (no opt-in exists), so they are unaffected by this flag.
+		if s.lastUsage != nil && s.chatIncludeUsage {
+			total := s.lastUsage.TotalTokens
+			if total == 0 {
+				total = s.lastUsage.InputTokens + s.lastUsage.OutputTokens
+			}
+			usageMap := map[string]any{
+				"prompt_tokens":     s.lastUsage.InputTokens,
+				"completion_tokens": s.lastUsage.OutputTokens,
+				"total_tokens":      total,
+			}
+			if s.lastUsage.CachedTokens > 0 {
+				usageMap["prompt_tokens_details"] = map[string]any{
+					"cached_tokens": s.lastUsage.CachedTokens,
+				}
+			}
+			s.emit(w, flusher, "", map[string]any{
+				"id":      s.chatChunkID,
+				"object":  "chat.completion.chunk",
+				"created": s.startTime.Unix(),
+				"model":   s.model,
+				"choices": []any{
+					map[string]any{
+						"index":         0,
+						"delta":         map[string]any{},
+						"finish_reason": nil,
+					},
+				},
+				"usage": usageMap,
+			})
+		}
+
 	case protocol.ProtocolAnthropic:
 		stopReason := "end_turn"
 		switch finishReason {
@@ -817,9 +866,25 @@ func (s *streamState) writeClosure(w http.ResponseWriter, flusher http.Flusher, 
 			"output_tokens": 0,
 		}
 		if s.lastUsage != nil {
+			// Anthropic reports input_tokens as the NOT-cached portion;
+			// cache_read_input_tokens / cache_creation_input_tokens are
+			// separate counters that, together with input_tokens, sum to the
+			// total input. Our StreamUsage.InputTokens is the gateway-normalised
+			// TOTAL (includes cache), so derive the raw uncached input here to
+			// avoid double-counting cache tokens.
+			rawInput := s.lastUsage.InputTokens - s.lastUsage.CachedTokens - s.lastUsage.CacheWriteTokens
+			if rawInput < 0 {
+				rawInput = 0
+			}
 			usageMap = map[string]any{
-				"input_tokens":  s.lastUsage.InputTokens,
+				"input_tokens":  rawInput,
 				"output_tokens": s.lastUsage.OutputTokens,
+			}
+			if s.lastUsage.CachedTokens > 0 {
+				usageMap["cache_read_input_tokens"] = s.lastUsage.CachedTokens
+			}
+			if s.lastUsage.CacheWriteTokens > 0 {
+				usageMap["cache_creation_input_tokens"] = s.lastUsage.CacheWriteTokens
 			}
 		}
 
@@ -858,11 +923,20 @@ func (s *streamState) writeClosure(w http.ResponseWriter, flusher http.Flusher, 
 			"tools":              []any{},
 		}
 		if s.lastUsage != nil {
-			resp["usage"] = map[string]any{
-				"input_tokens":   s.lastUsage.InputTokens,
-				"output_tokens":  s.lastUsage.OutputTokens,
-				"total_tokens":   s.lastUsage.TotalTokens,
+			usageMap := map[string]any{
+				"input_tokens":  s.lastUsage.InputTokens,
+				"output_tokens": s.lastUsage.OutputTokens,
+				"total_tokens":  s.lastUsage.TotalTokens,
 			}
+			if s.lastUsage.TotalTokens == 0 {
+				usageMap["total_tokens"] = s.lastUsage.InputTokens + s.lastUsage.OutputTokens
+			}
+			if s.lastUsage.CachedTokens > 0 {
+				usageMap["input_tokens_details"] = map[string]any{
+					"cached_tokens": s.lastUsage.CachedTokens,
+				}
+			}
+			resp["usage"] = usageMap
 		}
 		s.emit(w, flusher, "response.completed", map[string]any{
 			"type":     "response.completed",
@@ -1019,6 +1093,15 @@ func (s *streamState) handleUpstreamAnthropic(w http.ResponseWriter, flusher htt
 
 	switch eventType {
 	case "message_start":
+		// Capture the input token count from the upstream message_start so
+		// the downstream Anthropic message_start can report a realistic value.
+		if msg := getMap(event, "message"); msg != nil {
+			if u := getMap(msg, "usage"); u != nil {
+				if v := int64(getFloat64(u, "input_tokens")); v > 0 {
+					s.preludeInputTokens = v
+				}
+			}
+		}
 		s.writePrelude(w, flusher)
 
 	case "content_block_start":

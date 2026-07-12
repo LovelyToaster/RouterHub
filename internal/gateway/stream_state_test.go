@@ -106,6 +106,7 @@ func TestStreamState_ChatToResponses_TextOnly(t *testing.T) {
 		TotalTokens:  12,
 	})
 
+
 	// Input 3: finish chunk with usage
 	state.processUpstreamData(w, w, []byte(
 		`{"choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":2,"total_tokens":12}}`,
@@ -543,6 +544,8 @@ func TestStreamState_ResponsesToChat_ToolCall(t *testing.T) {
 		logEntry.RequestID, "test-model",
 		fixedStart, logEntry,
 	)
+	// Opt in to stream usage, as a real Chat client would.
+	state.chatIncludeUsage = true
 
 	// Input 1: response.created (prelude — no-op for Chat target)
 	state.processUpstreamData(w, w, []byte(
@@ -579,9 +582,10 @@ func TestStreamState_ResponsesToChat_ToolCall(t *testing.T) {
 	body := rr.Body.String()
 	events := parseSSE(body)
 
-	// Expect 4 events: tool_calls first chunk, delta chunk, finish chunk, [DONE].
-	if len(events) != 4 {
-		t.Fatalf("expected 4 events, got %d\nbody:\n%s", len(events), body)
+	// Expect 5 events: tool_calls first chunk, delta chunk, finish chunk,
+	// usage chunk, [DONE].
+	if len(events) != 5 {
+		t.Fatalf("expected 5 events, got %d\nbody:\n%s", len(events), body)
 	}
 
 	// --- event[0]: tool_calls first chunk ---
@@ -650,12 +654,37 @@ func TestStreamState_ResponsesToChat_ToolCall(t *testing.T) {
 		t.Errorf("event[2].finish_reason: expected 'tool_calls', got %v", ch2["finish_reason"])
 	}
 
-	// --- event[3]: [DONE] ---
+	// --- event[3]: usage chunk ---
 	if events[3].Event != "" {
-		t.Errorf("event[3]: expected empty event, got %q", events[3].Event)
+		t.Errorf("event[3]: expected empty event (Chat target), got %q", events[3].Event)
 	}
-	if string(events[3].Data) != "[DONE]" {
-		t.Errorf("event[3].data: expected [DONE], got %s", string(events[3].Data))
+	var e3 map[string]any
+	mustUnmarshal(t, events[3].Data, &e3)
+	choices3, _ := e3["choices"].([]any)
+	ch3, _ := choices3[0].(map[string]any)
+	if ch3["finish_reason"] != nil {
+		t.Errorf("event[3].finish_reason: expected null, got %v", ch3["finish_reason"])
+	}
+	usage3, _ := e3["usage"].(map[string]any)
+	if usage3 == nil {
+		t.Fatal("event[3].usage is nil")
+	}
+	if usage3["prompt_tokens"] != float64(5) {
+		t.Errorf("event[3].usage.prompt_tokens: expected 5, got %v", usage3["prompt_tokens"])
+	}
+	if usage3["completion_tokens"] != float64(3) {
+		t.Errorf("event[3].usage.completion_tokens: expected 3, got %v", usage3["completion_tokens"])
+	}
+	if usage3["total_tokens"] != float64(8) {
+		t.Errorf("event[3].usage.total_tokens: expected 8, got %v", usage3["total_tokens"])
+	}
+
+	// --- event[4]: [DONE] ---
+	if events[4].Event != "" {
+		t.Errorf("event[4]: expected empty event, got %q", events[4].Event)
+	}
+	if string(events[4].Data) != "[DONE]" {
+		t.Errorf("event[4].data: expected [DONE], got %s", string(events[4].Data))
 	}
 }
 
@@ -1392,5 +1421,507 @@ func TestStreamState_AnthropicToResponses_ThinkingWithSignature(t *testing.T) {
 	// reasoning done must come before text added.
 	if reasoningDoneIdx >= 0 && textAddedIdx >= 0 && reasoningDoneIdx > textAddedIdx {
 		t.Errorf("reasoning output_item.done (idx %d) should come before text output_item.added (idx %d)", reasoningDoneIdx, textAddedIdx)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Test 10: Responses → Chat, usage with cached_tokens injected
+// ---------------------------------------------------------------------------
+
+func TestStreamState_ResponsesToChat_UsageWithCache(t *testing.T) {
+	rr := httptest.NewRecorder()
+	w := &flushRecorder{rr}
+	logEntry := testLogEntry()
+
+	state := newStreamState(
+		protocol.ProtocolChatCompletions,
+		protocol.ProtocolResponses,
+		logEntry.RequestID, "test-model",
+		fixedStart, logEntry,
+	)
+	// Opt in to stream usage, as a real Chat client would.
+	state.chatIncludeUsage = true
+
+	// Text delta.
+	state.processUpstreamData(w, w, []byte(
+		`{"type":"response.output_text.delta","sequence_number":0,"output_index":0,"item_id":"msg_x","content_index":0,"delta":"Hi"}`,
+	))
+
+	// Provide usage with cached tokens (simulating proxy.go ParseStreamUsage).
+	state.SetUsage(&convert.StreamUsage{
+		InputTokens:  20,
+		OutputTokens: 4,
+		TotalTokens:  24,
+		CachedTokens: 15,
+	})
+
+	// Finish.
+	state.processUpstreamData(w, w, []byte(
+		`{"type":"response.completed","sequence_number":1,"response":{"id":"resp_x","model":"m","status":"completed","output":[]}}`,
+	))
+
+	state.writeStreamEnd(w, w)
+
+	body := rr.Body.String()
+	events := parseSSE(body)
+
+	// Expect: text chunk, finish chunk, usage chunk, [DONE].
+	if len(events) != 4 {
+		t.Fatalf("expected 4 events, got %d\nbody:\n%s", len(events), body)
+	}
+
+	// --- event[2]: usage chunk ---
+	var e2 map[string]any
+	mustUnmarshal(t, events[2].Data, &e2)
+	choices2, _ := e2["choices"].([]any)
+	ch2, _ := choices2[0].(map[string]any)
+	if ch2["finish_reason"] != nil {
+		t.Errorf("event[2].finish_reason: expected null, got %v", ch2["finish_reason"])
+	}
+	usage2, _ := e2["usage"].(map[string]any)
+	if usage2 == nil {
+		t.Fatal("event[2].usage is nil")
+	}
+	if usage2["prompt_tokens"] != float64(20) {
+		t.Errorf("event[2].usage.prompt_tokens: expected 20, got %v", usage2["prompt_tokens"])
+	}
+	if usage2["completion_tokens"] != float64(4) {
+		t.Errorf("event[2].usage.completion_tokens: expected 4, got %v", usage2["completion_tokens"])
+	}
+	if usage2["total_tokens"] != float64(24) {
+		t.Errorf("event[2].usage.total_tokens: expected 24, got %v", usage2["total_tokens"])
+	}
+	details2, _ := usage2["prompt_tokens_details"].(map[string]any)
+	if details2 == nil {
+		t.Fatal("event[2].usage.prompt_tokens_details is nil")
+	}
+	if details2["cached_tokens"] != float64(15) {
+		t.Errorf("event[2].usage.prompt_tokens_details.cached_tokens: expected 15, got %v", details2["cached_tokens"])
+	}
+
+	// --- event[3]: [DONE] ---
+	if string(events[3].Data) != "[DONE]" {
+		t.Errorf("event[3].data: expected [DONE], got %s", string(events[3].Data))
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Test 11: Chat → Anthropic, cache tokens surfaced in message_delta usage
+// ---------------------------------------------------------------------------
+
+func TestStreamState_ChatToAnthropic_UsageWithCache(t *testing.T) {
+	rr := httptest.NewRecorder()
+	w := &flushRecorder{rr}
+	logEntry := testLogEntry()
+
+	state := newStreamState(
+		protocol.ProtocolAnthropic,
+		protocol.ProtocolChatCompletions,
+		logEntry.RequestID, "test-model",
+		fixedStart, logEntry,
+	)
+
+	state.processUpstreamData(w, w, []byte(
+		`{"choices":[{"index":0,"delta":{"content":"Hi"},"finish_reason":null}]}`,
+	))
+
+	// Provide usage before the finish chunk (proxy.go sets it via
+	// ParseStreamUsage before processUpstreamData on the same line).
+	// Gateway-normalised: InputTokens is the TOTAL (raw+cache). Realistic
+	// values: raw=78, cache_read=15, cache_creation=7 -> total=100.
+	state.SetUsage(&convert.StreamUsage{
+		InputTokens:      100,
+		OutputTokens:     4,
+		TotalTokens:      104,
+		CachedTokens:     15,
+		CacheWriteTokens: 7,
+	})
+
+	state.processUpstreamData(w, w, []byte(
+		`{"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`,
+	))
+
+	state.writeStreamEnd(w, w)
+
+	body := rr.Body.String()
+	events := parseSSE(body)
+
+	// Find message_delta.
+	var md map[string]any
+	for _, ev := range events {
+		if ev.Event != "message_delta" {
+			continue
+		}
+		mustUnmarshal(t, ev.Data, &md)
+	}
+	if md == nil {
+		t.Fatal("message_delta event not found")
+	}
+	usage, _ := md["usage"].(map[string]any)
+	if usage == nil {
+		t.Fatal("message_delta.usage is nil")
+	}
+	if usage["input_tokens"] != float64(78) {
+		t.Errorf("usage.input_tokens: expected 78 (raw = total - cache_read - cache_creation), got %v", usage["input_tokens"])
+	}
+	if usage["output_tokens"] != float64(4) {
+		t.Errorf("usage.output_tokens: expected 4, got %v", usage["output_tokens"])
+	}
+	if usage["cache_read_input_tokens"] != float64(15) {
+		t.Errorf("usage.cache_read_input_tokens: expected 15, got %v", usage["cache_read_input_tokens"])
+	}
+	if usage["cache_creation_input_tokens"] != float64(7) {
+		t.Errorf("usage.cache_creation_input_tokens: expected 7, got %v", usage["cache_creation_input_tokens"])
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Test 12: Chat → Responses, cached_tokens surfaced in input_tokens_details
+// ---------------------------------------------------------------------------
+
+func TestStreamState_ChatToResponses_UsageWithCache(t *testing.T) {
+	rr := httptest.NewRecorder()
+	w := &flushRecorder{rr}
+	logEntry := testLogEntry()
+
+	state := newStreamState(
+		protocol.ProtocolResponses,
+		protocol.ProtocolChatCompletions,
+		logEntry.RequestID, "test-model",
+		fixedStart, logEntry,
+	)
+
+	state.processUpstreamData(w, w, []byte(
+		`{"choices":[{"index":0,"delta":{"content":"Hi"},"finish_reason":null}]}`,
+	))
+
+	// Provide usage before the finish chunk (proxy.go sets it via
+	// ParseStreamUsage before processUpstreamData on the same line).
+	state.SetUsage(&convert.StreamUsage{
+		InputTokens:  20,
+		OutputTokens: 4,
+		TotalTokens:  24,
+		CachedTokens: 15,
+	})
+
+	state.processUpstreamData(w, w, []byte(
+		`{"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`,
+	))
+
+	state.writeStreamEnd(w, w)
+
+	body := rr.Body.String()
+	events := parseSSE(body)
+
+	var completed map[string]any
+	for _, ev := range events {
+		if ev.Event != "response.completed" {
+			continue
+		}
+		mustUnmarshal(t, ev.Data, &completed)
+	}
+	if completed == nil {
+		t.Fatal("response.completed event not found")
+	}
+	resp, _ := completed["response"].(map[string]any)
+	usage, _ := resp["usage"].(map[string]any)
+	if usage == nil {
+		t.Fatal("response.usage is nil")
+	}
+	if usage["input_tokens"] != float64(20) {
+		t.Errorf("usage.input_tokens: expected 20, got %v", usage["input_tokens"])
+	}
+	if usage["output_tokens"] != float64(4) {
+		t.Errorf("usage.output_tokens: expected 4, got %v", usage["output_tokens"])
+	}
+	if usage["total_tokens"] != float64(24) {
+		t.Errorf("usage.total_tokens: expected 24, got %v", usage["total_tokens"])
+	}
+	details, _ := usage["input_tokens_details"].(map[string]any)
+	if details == nil {
+		t.Fatal("usage.input_tokens_details is nil")
+	}
+	if details["cached_tokens"] != float64(15) {
+		t.Errorf("usage.input_tokens_details.cached_tokens: expected 15, got %v", details["cached_tokens"])
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Test 13: Anthropic → Chat, usage (incl. cache) surfaced in Chat usage chunk
+// ---------------------------------------------------------------------------
+
+func TestStreamState_AnthropicToChat_UsageWithCache(t *testing.T) {
+	rr := httptest.NewRecorder()
+	w := &flushRecorder{rr}
+	logEntry := testLogEntry()
+
+	state := newStreamState(
+		protocol.ProtocolChatCompletions,
+		protocol.ProtocolAnthropic,
+		logEntry.RequestID, "test-model",
+		fixedStart, logEntry,
+	)
+	// Opt in to stream usage, as a real Chat client would.
+	state.chatIncludeUsage = true
+
+	// Upstream Anthropic stream events.
+	state.processUpstreamData(w, w, []byte(
+		`{"type":"message_start","message":{"id":"msg_x","type":"message","role":"assistant","model":"m","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":78,"output_tokens":0}}}`,
+	))
+	state.processUpstreamData(w, w, []byte(
+		`{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`,
+	))
+	state.processUpstreamData(w, w, []byte(
+		`{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hi"}}`,
+	))
+	state.processUpstreamData(w, w, []byte(
+		`{"type":"content_block_stop","index":0}`,
+	))
+	// message_delta carries output + cache counters (Anthropic convention).
+	state.processUpstreamData(w, w, []byte(
+		`{"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":4,"cache_read_input_tokens":15,"cache_creation_input_tokens":7}}`,
+	))
+
+	// The gateway normalises InputTokens to the TOTAL (raw + cache), matching
+	// what proxy.go's ParseStreamUsage would store. It is set before the
+	// message_stop event that triggers writeClosure.
+	state.SetUsage(&convert.StreamUsage{
+		InputTokens:      100,
+		OutputTokens:     4,
+		TotalTokens:      104,
+		CachedTokens:     15,
+		CacheWriteTokens: 7,
+	})
+
+	state.processUpstreamData(w, w, []byte(
+		`{"type":"message_stop"}`,
+	))
+
+	state.writeStreamEnd(w, w)
+
+	body := rr.Body.String()
+	events := parseSSE(body)
+
+	// Find the usage chunk (the data chunk carrying "usage").
+	var usageChunk map[string]any
+	for _, ev := range events {
+		if ev.Event != "" {
+			continue
+		}
+		var p map[string]any
+		if err := json.Unmarshal(ev.Data, &p); err != nil {
+			continue
+		}
+		if _, ok := p["usage"]; ok {
+			usageChunk = p
+		}
+	}
+	if usageChunk == nil {
+		t.Fatal("Chat usage chunk not found")
+	}
+	usage, _ := usageChunk["usage"].(map[string]any)
+	if usage == nil {
+		t.Fatal("usage is nil")
+	}
+	// OpenAI Chat prompt_tokens is the TOTAL including cache.
+	if usage["prompt_tokens"] != float64(100) {
+		t.Errorf("usage.prompt_tokens: expected 100 (total incl cache), got %v", usage["prompt_tokens"])
+	}
+	if usage["completion_tokens"] != float64(4) {
+		t.Errorf("usage.completion_tokens: expected 4, got %v", usage["completion_tokens"])
+	}
+	if usage["total_tokens"] != float64(104) {
+		t.Errorf("usage.total_tokens: expected 104, got %v", usage["total_tokens"])
+	}
+	details, _ := usage["prompt_tokens_details"].(map[string]any)
+	if details == nil {
+		t.Fatal("usage.prompt_tokens_details is nil")
+	}
+	if details["cached_tokens"] != float64(15) {
+		t.Errorf("usage.prompt_tokens_details.cached_tokens: expected 15, got %v", details["cached_tokens"])
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Test 14: Anthropic → Responses, usage (incl. cache) surfaced in response.completed
+// ---------------------------------------------------------------------------
+
+func TestStreamState_AnthropicToResponses_UsageWithCache(t *testing.T) {
+	rr := httptest.NewRecorder()
+	w := &flushRecorder{rr}
+	logEntry := testLogEntry()
+
+	state := newStreamState(
+		protocol.ProtocolResponses,
+		protocol.ProtocolAnthropic,
+		logEntry.RequestID, "test-model",
+		fixedStart, logEntry,
+	)
+
+	state.processUpstreamData(w, w, []byte(
+		`{"type":"message_start","message":{"id":"msg_x","type":"message","role":"assistant","model":"m","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":78,"output_tokens":0}}}`,
+	))
+	state.processUpstreamData(w, w, []byte(
+		`{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`,
+	))
+	state.processUpstreamData(w, w, []byte(
+		`{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hi"}}`,
+	))
+	state.processUpstreamData(w, w, []byte(
+		`{"type":"content_block_stop","index":0}`,
+	))
+	state.processUpstreamData(w, w, []byte(
+		`{"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":4,"cache_read_input_tokens":15,"cache_creation_input_tokens":7}}`,
+	))
+
+	// Gateway-normalised TOTAL (raw + cache), set before message_stop.
+	state.SetUsage(&convert.StreamUsage{
+		InputTokens:  100,
+		OutputTokens: 4,
+		TotalTokens:  104,
+		CachedTokens: 15,
+	})
+
+	state.processUpstreamData(w, w, []byte(
+		`{"type":"message_stop"}`,
+	))
+
+	state.writeStreamEnd(w, w)
+
+	body := rr.Body.String()
+	events := parseSSE(body)
+
+	var completed map[string]any
+	for _, ev := range events {
+		if ev.Event != "response.completed" {
+			continue
+		}
+		mustUnmarshal(t, ev.Data, &completed)
+	}
+	if completed == nil {
+		t.Fatal("response.completed event not found")
+	}
+	resp, _ := completed["response"].(map[string]any)
+	usage, _ := resp["usage"].(map[string]any)
+	if usage == nil {
+		t.Fatal("response.usage is nil")
+	}
+	// Responses input_tokens is the TOTAL including cache.
+	if usage["input_tokens"] != float64(100) {
+		t.Errorf("usage.input_tokens: expected 100 (total incl cache), got %v", usage["input_tokens"])
+	}
+	if usage["output_tokens"] != float64(4) {
+		t.Errorf("usage.output_tokens: expected 4, got %v", usage["output_tokens"])
+	}
+	if usage["total_tokens"] != float64(104) {
+		t.Errorf("usage.total_tokens: expected 104, got %v", usage["total_tokens"])
+	}
+	details, _ := usage["input_tokens_details"].(map[string]any)
+	if details == nil {
+		t.Fatal("usage.input_tokens_details is nil")
+	}
+	if details["cached_tokens"] != float64(15) {
+		t.Errorf("usage.input_tokens_details.cached_tokens: expected 15, got %v", details["cached_tokens"])
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Test 15: Responses → Chat, NO usage chunk when client did not opt in
+// ---------------------------------------------------------------------------
+
+func TestStreamState_ResponsesToChat_NoUsageWhenNotRequested(t *testing.T) {
+	rr := httptest.NewRecorder()
+	w := &flushRecorder{rr}
+	logEntry := testLogEntry()
+
+	state := newStreamState(
+		protocol.ProtocolChatCompletions,
+		protocol.ProtocolResponses,
+		logEntry.RequestID, "test-model",
+		fixedStart, logEntry,
+	)
+	// chatIncludeUsage left at its default (false): client did not set
+	// stream_options.include_usage, so no usage block should be emitted.
+
+	state.processUpstreamData(w, w, []byte(
+		`{"type":"response.output_text.delta","sequence_number":0,"output_index":0,"item_id":"msg_x","content_index":0,"delta":"Hi"}`,
+	))
+	state.SetUsage(&convert.StreamUsage{
+		InputTokens:  20,
+		OutputTokens: 4,
+		TotalTokens:  24,
+		CachedTokens: 15,
+	})
+	state.processUpstreamData(w, w, []byte(
+		`{"type":"response.completed","sequence_number":1,"response":{"id":"resp_x","model":"m","status":"completed","output":[]}}`,
+	))
+	state.writeStreamEnd(w, w)
+
+	body := rr.Body.String()
+	events := parseSSE(body)
+
+	// Expect: text chunk, finish chunk, [DONE] (no usage chunk).
+	if len(events) != 3 {
+		t.Fatalf("expected 3 events (no usage), got %d\nbody:\n%s", len(events), body)
+	}
+	for _, ev := range events {
+		var p map[string]any
+		if err := json.Unmarshal(ev.Data, &p); err != nil {
+			continue
+		}
+		if _, ok := p["usage"]; ok {
+			t.Errorf("unexpected usage chunk emitted without include_usage opt-in: %s", string(ev.Data))
+		}
+	}
+	if string(events[len(events)-1].Data) != "[DONE]" {
+		t.Errorf("last event: expected [DONE], got %s", string(events[len(events)-1].Data))
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Test 16: Anthropic → Anthropic, message_start carries real input_tokens
+// ---------------------------------------------------------------------------
+
+func TestStreamState_AnthropicToAnthropic_PreludeInputTokens(t *testing.T) {
+	rr := httptest.NewRecorder()
+	w := &flushRecorder{rr}
+	logEntry := testLogEntry()
+
+	state := newStreamState(
+		protocol.ProtocolAnthropic,
+		protocol.ProtocolAnthropic,
+		logEntry.RequestID, "test-model",
+		fixedStart, logEntry,
+	)
+
+	// Upstream message_start advertises input_tokens; the downstream
+	// message_start should surface it instead of a zero placeholder.
+	state.processUpstreamData(w, w, []byte(
+		`{"type":"message_start","message":{"id":"msg_x","type":"message","role":"assistant","model":"m","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":78,"output_tokens":0}}}`,
+	))
+
+	body := rr.Body.String()
+	events := parseSSE(body)
+
+	var ms map[string]any
+	for _, ev := range events {
+		if ev.Event != "message_start" {
+			continue
+		}
+		mustUnmarshal(t, ev.Data, &ms)
+	}
+	if ms == nil {
+		t.Fatal("message_start event not found")
+	}
+	msg, _ := ms["message"].(map[string]any)
+	if msg == nil {
+		t.Fatal("message_start.message is nil")
+	}
+	usage, _ := msg["usage"].(map[string]any)
+	if usage == nil {
+		t.Fatal("message_start.message.usage is nil")
+	}
+	if usage["input_tokens"] != float64(78) {
+		t.Errorf("message_start usage.input_tokens: expected 78, got %v", usage["input_tokens"])
 	}
 }
