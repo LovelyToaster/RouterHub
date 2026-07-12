@@ -310,6 +310,26 @@ func ConvertedProxyRequest(w http.ResponseWriter, r *http.Request, selected *Sel
 	}
 	defer resp.Body.Close()
 
+	// Intercept error responses before stream/non-stream dispatch so we can
+	// include the request body in the log for diagnosis.
+	if resp.StatusCode >= 400 {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		logEntry.Status = "error"
+		errMsg := fmt.Sprintf("upstream returned status %d for req [%s]: %s", resp.StatusCode, string(convertedBody), string(bodyBytes))
+		logEntry.ErrorMessage = &errMsg
+		for key, values := range resp.Header {
+			if hopByHopHeaders[key] {
+				continue
+			}
+			for _, v := range values {
+				w.Header().Add(key, v)
+			}
+		}
+		w.WriteHeader(resp.StatusCode)
+		_, _ = w.Write(bodyBytes)
+		return
+	}
+
 	now := storage.Now()
 	logEntry.FinishedAt = &now
 
