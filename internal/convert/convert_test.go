@@ -2253,6 +2253,8 @@ func TestConvertResponsesToChat_FunctionCallOutput(t *testing.T) {
 	}
 
 	msgs := getSlice(out, "messages")
+	// user + assistant (with tool_calls from function_call AND appended from
+	// function_call_output) + tool = 3 messages
 	if len(msgs) != 3 {
 		t.Fatalf("expected 3 messages, got %d", len(msgs))
 	}
@@ -2263,14 +2265,14 @@ func TestConvertResponsesToChat_FunctionCallOutput(t *testing.T) {
 		t.Errorf("expected msg[0] role 'user', got '%s'", getString(msg0, "role"))
 	}
 
-	// Second message: assistant with tool_calls
+	// Second message: assistant with tool_calls (merged)
 	msg1 := msgs[1].(map[string]any)
 	if getString(msg1, "role") != "assistant" {
 		t.Errorf("expected msg[1] role 'assistant', got '%s'", getString(msg1, "role"))
 	}
 	toolCalls := getSlice(msg1, "tool_calls")
-	if len(toolCalls) != 1 {
-		t.Fatalf("expected 1 tool_call, got %d", len(toolCalls))
+	if len(toolCalls) != 2 {
+		t.Fatalf("expected 2 tool_calls (original + appended), got %d", len(toolCalls))
 	}
 
 	// Third message: tool (from function_call_output)
@@ -2309,12 +2311,12 @@ func TestConvertResponsesToChat_FunctionCallOutputInUserContent(t *testing.T) {
 	}
 
 	msgs := getSlice(out, "messages")
-	// Should have: user (remaining parts), tool (function_call_output), assistant
-	if len(msgs) != 3 {
-		t.Fatalf("expected 3 messages, got %d", len(msgs))
+	// user + synthetic assistant + tool + assistant = 4 messages
+	if len(msgs) != 4 {
+		t.Fatalf("expected 4 messages, got %d", len(msgs))
 	}
 
-	// First message: user with text only (function_call_output separated out)
+	// First message: user with text only
 	msg0 := msgs[0].(map[string]any)
 	if getString(msg0, "role") != "user" {
 		t.Errorf("expected msg[0] role 'user', got '%s'", getString(msg0, "role"))
@@ -2323,22 +2325,28 @@ func TestConvertResponsesToChat_FunctionCallOutputInUserContent(t *testing.T) {
 		t.Errorf("expected msg[0] content 'What is the result?', got '%s'", getString(msg0, "content"))
 	}
 
-	// Second message: tool (from function_call_output, appended after user message)
+	// Second message: synthetic assistant
 	msg1 := msgs[1].(map[string]any)
-	if getString(msg1, "role") != "tool" {
-		t.Errorf("expected msg[1] role 'tool', got '%s'", getString(msg1, "role"))
-	}
-	if getString(msg1, "tool_call_id") != "call_456" {
-		t.Errorf("expected msg[1] tool_call_id 'call_456', got '%s'", getString(msg1, "tool_call_id"))
-	}
-	if getString(msg1, "content") != "42" {
-		t.Errorf("expected msg[1] content '42', got '%s'", getString(msg1, "content"))
+	if getString(msg1, "role") != "assistant" {
+		t.Errorf("expected msg[1] role 'assistant', got '%s'", getString(msg1, "role"))
 	}
 
-	// Third message: assistant
+	// Third message: tool
 	msg2 := msgs[2].(map[string]any)
-	if getString(msg2, "role") != "assistant" {
-		t.Errorf("expected msg[2] role 'assistant', got '%s'", getString(msg2, "role"))
+	if getString(msg2, "role") != "tool" {
+		t.Errorf("expected msg[2] role 'tool', got '%s'", getString(msg2, "role"))
+	}
+	if getString(msg2, "tool_call_id") != "call_456" {
+		t.Errorf("expected msg[2] tool_call_id 'call_456', got '%s'", getString(msg2, "tool_call_id"))
+	}
+	if getString(msg2, "content") != "42" {
+		t.Errorf("expected msg[2] content '42', got '%s'", getString(msg2, "content"))
+	}
+
+	// Fourth message: assistant
+	msg3 := msgs[3].(map[string]any)
+	if getString(msg3, "role") != "assistant" {
+		t.Errorf("expected msg[3] role 'assistant', got '%s'", getString(msg3, "role"))
 	}
 }
 
@@ -2365,29 +2373,40 @@ func TestConvertResponsesToAnthropic_FunctionCallOutput(t *testing.T) {
 	}
 
 	msgs := getSlice(out, "messages")
-	// Should have: user, assistant, user (with tool_result)
+	// user + assistant (with merged tool_use from both function_call and
+	// function_call_output) + user(tool_result) = 3 messages
 	if len(msgs) != 3 {
 		t.Fatalf("expected 3 messages, got %d", len(msgs))
 	}
 
-	// Third message: user with tool_result content (from function_call_output)
+	// Second message: assistant with merged tool_use blocks
+	msg1 := msgs[1].(map[string]any)
+	if getString(msg1, "role") != "assistant" {
+		t.Errorf("expected msg[1] role 'assistant', got '%s'", getString(msg1, "role"))
+	}
+	content1 := getSlice(msg1, "content")
+	if len(content1) != 2 {
+		t.Fatalf("expected msg[1].content to have 2 tool_use blocks, got %d", len(content1))
+	}
+
+	// Third message: user with tool_result
 	msg2 := msgs[2].(map[string]any)
 	if getString(msg2, "role") != "user" {
 		t.Errorf("expected msg[2] role 'user', got '%s'", getString(msg2, "role"))
 	}
-	content := getSlice(msg2, "content")
-	if len(content) != 1 {
-		t.Fatalf("expected msg[2].content to have 1 item, got %d", len(content))
+	content2 := getSlice(msg2, "content")
+	if len(content2) != 1 {
+		t.Fatalf("expected msg[2].content to have 1 item, got %d", len(content2))
 	}
-	block := content[0].(map[string]any)
-	if getString(block, "type") != "tool_result" {
-		t.Errorf("expected content[0].type 'tool_result', got '%s'", getString(block, "type"))
+	block2 := content2[0].(map[string]any)
+	if getString(block2, "type") != "tool_result" {
+		t.Errorf("expected content[2].type 'tool_result', got '%s'", getString(block2, "type"))
 	}
-	if getString(block, "tool_use_id") != "call_123" {
-		t.Errorf("expected tool_use_id 'call_123', got '%s'", getString(block, "tool_use_id"))
+	if getString(block2, "tool_use_id") != "call_123" {
+		t.Errorf("expected tool_use_id 'call_123', got '%s'", getString(block2, "tool_use_id"))
 	}
-	if getString(block, "content") != "Sunny, 72F" {
-		t.Errorf("expected content 'Sunny, 72F', got '%s'", getString(block, "content"))
+	if getString(block2, "content") != "Sunny, 72F" {
+		t.Errorf("expected content 'Sunny, 72F', got '%s'", getString(block2, "content"))
 	}
 }
 
@@ -2414,6 +2433,7 @@ func TestConvertResponsesToChat_FunctionCallOutput_NonStringOutput(t *testing.T)
 	}
 
 	msgs := getSlice(out, "messages")
+	// user + assistant (merged tool_calls) + tool = 3 messages
 	if len(msgs) != 3 {
 		t.Fatalf("expected 3 messages, got %d", len(msgs))
 	}
@@ -2456,9 +2476,9 @@ func TestConvertResponsesToChat_FunctionCallOutput_MultipleInUserContent(t *test
 	}
 
 	msgs := getSlice(out, "messages")
-	// Expected: user, tool, tool, assistant
-	if len(msgs) != 4 {
-		t.Fatalf("expected 4 messages, got %d", len(msgs))
+	// user + synth_asst(call_001) + tool(call_001) + synth_asst(call_002) + tool(call_002) + assistant = 6
+	if len(msgs) != 6 {
+		t.Fatalf("expected 6 messages, got %d", len(msgs))
 	}
 
 	// First message: user with remaining text
@@ -2470,34 +2490,36 @@ func TestConvertResponsesToChat_FunctionCallOutput_MultipleInUserContent(t *test
 		t.Errorf("expected msg[0] content 'Step 1 complete', got '%s'", getString(msg0, "content"))
 	}
 
-	// Second message: tool (call_001)
-	msg1 := msgs[1].(map[string]any)
-	if getString(msg1, "role") != "tool" {
-		t.Errorf("expected msg[1] role 'tool', got '%s'", getString(msg1, "role"))
-	}
-	if getString(msg1, "tool_call_id") != "call_001" {
-		t.Errorf("expected msg[1] tool_call_id 'call_001', got '%s'", getString(msg1, "tool_call_id"))
-	}
-	if getString(msg1, "content") != "result_1" {
-		t.Errorf("expected msg[1] content 'result_1', got '%s'", getString(msg1, "content"))
-	}
-
-	// Third message: tool (call_002)
+	// msg[1]: synthetic assistant for call_001
+	// msg[2]: tool for call_001
 	msg2 := msgs[2].(map[string]any)
 	if getString(msg2, "role") != "tool" {
 		t.Errorf("expected msg[2] role 'tool', got '%s'", getString(msg2, "role"))
 	}
-	if getString(msg2, "tool_call_id") != "call_002" {
-		t.Errorf("expected msg[2] tool_call_id 'call_002', got '%s'", getString(msg2, "tool_call_id"))
+	if getString(msg2, "tool_call_id") != "call_001" {
+		t.Errorf("expected msg[2] tool_call_id 'call_001', got '%s'", getString(msg2, "tool_call_id"))
 	}
-	if getString(msg2, "content") != "result_2" {
-		t.Errorf("expected msg[2] content 'result_2', got '%s'", getString(msg2, "content"))
+	if getString(msg2, "content") != "result_1" {
+		t.Errorf("expected msg[2] content 'result_1', got '%s'", getString(msg2, "content"))
 	}
 
-	// Fourth message: assistant
-	msg3 := msgs[3].(map[string]any)
-	if getString(msg3, "role") != "assistant" {
-		t.Errorf("expected msg[3] role 'assistant', got '%s'", getString(msg3, "role"))
+	// msg[3]: synthetic assistant for call_002
+	// msg[4]: tool for call_002
+	msg4 := msgs[4].(map[string]any)
+	if getString(msg4, "role") != "tool" {
+		t.Errorf("expected msg[4] role 'tool', got '%s'", getString(msg4, "role"))
+	}
+	if getString(msg4, "tool_call_id") != "call_002" {
+		t.Errorf("expected msg[4] tool_call_id 'call_002', got '%s'", getString(msg4, "tool_call_id"))
+	}
+	if getString(msg4, "content") != "result_2" {
+		t.Errorf("expected msg[4] content 'result_2', got '%s'", getString(msg4, "content"))
+	}
+
+	// Last message: assistant
+	msg5 := msgs[5].(map[string]any)
+	if getString(msg5, "role") != "assistant" {
+		t.Errorf("expected msg[5] role 'assistant', got '%s'", getString(msg5, "role"))
 	}
 }
 
@@ -2524,27 +2546,33 @@ func TestConvertResponsesToChat_FunctionCallOutput_PureOutput(t *testing.T) {
 	}
 
 	msgs := getSlice(out, "messages")
-	// Expected: tool (no user message since there's no other content), assistant
-	if len(msgs) != 2 {
-		t.Fatalf("expected 2 messages (tool + assistant), got %d", len(msgs))
+	// synthetic assistant + tool + assistant = 3 messages (no user msg since no other content)
+	if len(msgs) != 3 {
+		t.Fatalf("expected 3 messages, got %d", len(msgs))
 	}
 
-	// First message: tool (no user message generated)
+	// First message: synthetic assistant
 	msg0 := msgs[0].(map[string]any)
-	if getString(msg0, "role") != "tool" {
-		t.Errorf("expected msg[0] role 'tool', got '%s'", getString(msg0, "role"))
-	}
-	if getString(msg0, "tool_call_id") != "call_001" {
-		t.Errorf("expected msg[0] tool_call_id 'call_001', got '%s'", getString(msg0, "tool_call_id"))
-	}
-	if getString(msg0, "content") != "42" {
-		t.Errorf("expected msg[0] content '42', got '%s'", getString(msg0, "content"))
+	if getString(msg0, "role") != "assistant" {
+		t.Errorf("expected msg[0] role 'assistant', got '%s'", getString(msg0, "role"))
 	}
 
-	// Second message: assistant
+	// Second message: tool
 	msg1 := msgs[1].(map[string]any)
-	if getString(msg1, "role") != "assistant" {
-		t.Errorf("expected msg[1] role 'assistant', got '%s'", getString(msg1, "role"))
+	if getString(msg1, "role") != "tool" {
+		t.Errorf("expected msg[1] role 'tool', got '%s'", getString(msg1, "role"))
+	}
+	if getString(msg1, "tool_call_id") != "call_001" {
+		t.Errorf("expected msg[1] tool_call_id 'call_001', got '%s'", getString(msg1, "tool_call_id"))
+	}
+	if getString(msg1, "content") != "42" {
+		t.Errorf("expected msg[1] content '42', got '%s'", getString(msg1, "content"))
+	}
+
+	// Third message: assistant
+	msg2 := msgs[2].(map[string]any)
+	if getString(msg2, "role") != "assistant" {
+		t.Errorf("expected msg[2] role 'assistant', got '%s'", getString(msg2, "role"))
 	}
 }
 
@@ -2573,12 +2601,12 @@ func TestConvertResponsesToAnthropic_FunctionCallOutputInUserContent(t *testing.
 	}
 
 	msgs := getSlice(out, "messages")
-	// Expected: user (text), user (tool_result), assistant
-	if len(msgs) != 3 {
-		t.Fatalf("expected 3 messages, got %d", len(msgs))
+	// user + synthetic asst + user(tool_result) + assistant = 4 messages
+	if len(msgs) != 4 {
+		t.Fatalf("expected 4 messages, got %d", len(msgs))
 	}
 
-	// First message: user with text content
+	// First message: user with text only
 	msg0 := msgs[0].(map[string]any)
 	if getString(msg0, "role") != "user" {
 		t.Errorf("expected msg[0] role 'user', got '%s'", getString(msg0, "role"))
@@ -2595,30 +2623,36 @@ func TestConvertResponsesToAnthropic_FunctionCallOutputInUserContent(t *testing.
 		t.Errorf("expected text 'What is the result?', got '%s'", getString(block0, "text"))
 	}
 
-	// Second message: user with tool_result (function_call_output extracted)
+	// Second message: synthetic assistant with tool_use
 	msg1 := msgs[1].(map[string]any)
-	if getString(msg1, "role") != "user" {
-		t.Errorf("expected msg[1] role 'user', got '%s'", getString(msg1, "role"))
-	}
-	content1 := getSlice(msg1, "content")
-	if len(content1) != 1 {
-		t.Fatalf("expected msg[1].content to have 1 item, got %d", len(content1))
-	}
-	block1 := content1[0].(map[string]any)
-	if getString(block1, "type") != "tool_result" {
-		t.Errorf("expected content[1].type 'tool_result', got '%s'", getString(block1, "type"))
-	}
-	if getString(block1, "tool_use_id") != "call_456" {
-		t.Errorf("expected tool_use_id 'call_456', got '%s'", getString(block1, "tool_use_id"))
-	}
-	if getString(block1, "content") != "42" {
-		t.Errorf("expected content '42', got '%s'", getString(block1, "content"))
+	if getString(msg1, "role") != "assistant" {
+		t.Errorf("expected msg[1] role 'assistant', got '%s'", getString(msg1, "role"))
 	}
 
-	// Third message: assistant with tool_use
+	// Third message: user with tool_result
 	msg2 := msgs[2].(map[string]any)
-	if getString(msg2, "role") != "assistant" {
-		t.Errorf("expected msg[2] role 'assistant', got '%s'", getString(msg2, "role"))
+	if getString(msg2, "role") != "user" {
+		t.Errorf("expected msg[2] role 'user', got '%s'", getString(msg2, "role"))
+	}
+	content2 := getSlice(msg2, "content")
+	if len(content2) != 1 {
+		t.Fatalf("expected msg[2].content to have 1 item, got %d", len(content2))
+	}
+	block2 := content2[0].(map[string]any)
+	if getString(block2, "type") != "tool_result" {
+		t.Errorf("expected content[2].type 'tool_result', got '%s'", getString(block2, "type"))
+	}
+	if getString(block2, "tool_use_id") != "call_456" {
+		t.Errorf("expected tool_use_id 'call_456', got '%s'", getString(block2, "tool_use_id"))
+	}
+	if getString(block2, "content") != "42" {
+		t.Errorf("expected content '42', got '%s'", getString(block2, "content"))
+	}
+
+	// Fourth message: assistant
+	msg3 := msgs[3].(map[string]any)
+	if getString(msg3, "role") != "assistant" {
+		t.Errorf("expected msg[3] role 'assistant', got '%s'", getString(msg3, "role"))
 	}
 }
 
@@ -2645,6 +2679,7 @@ func TestConvertResponsesToChat_FunctionCallOutput_EmptyOutput(t *testing.T) {
 	}
 
 	msgs := getSlice(out, "messages")
+	// user + assistant (merged) + tool = 3 messages
 	if len(msgs) != 3 {
 		t.Fatalf("expected 3 messages, got %d", len(msgs))
 	}

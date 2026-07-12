@@ -1116,9 +1116,24 @@ func convertResponsesInputToChat(input any) []any {
 			content := itemMap["content"]
 
 			// Handle top-level function_call_output items (no role field).
+			// The Responses API allows submitting function_call_output without
+			// repeating the preceding function_call in the input. Chat API is
+			// stateless and needs an assistant with matching tool_calls as
+			// the referent for tool_call_id.
+			// Strategy: append the tool_call to the last assistant message
+			// if one already exists; otherwise create a synthetic one.
 			if itemType := getString(itemMap, "type"); itemType == "function_call_output" {
 				callID := getString(itemMap, "call_id")
 				output := extractOutput(itemMap)
+				toolCall := map[string]any{
+					"id":   callID,
+					"type": "function",
+					"function": map[string]any{
+						"name":      "_tool_call",
+						"arguments": "{}",
+					},
+				}
+				appendToolCallToLastAssistant(&msgs, toolCall)
 				msgs = append(msgs, map[string]any{
 					"role":         "tool",
 					"tool_call_id": callID,
@@ -1129,7 +1144,9 @@ func convertResponsesInputToChat(input any) []any {
 
 			switch role {
 			case "user":
-				// Separate function_call_output items from other content parts.
+				// Separate function_call_output from other content parts.
+				// Append tool_call to the last assistant if one exists,
+				// otherwise create a synthetic assistant.
 				if contentArr, isArr := content.([]any); isArr {
 					var userParts []any
 					var toolMsgs []any
@@ -1142,6 +1159,15 @@ func convertResponsesInputToChat(input any) []any {
 						if getString(p, "type") == "function_call_output" {
 							callID := getString(p, "call_id")
 							output := extractOutput(p)
+							toolCall := map[string]any{
+								"id":   callID,
+								"type": "function",
+								"function": map[string]any{
+									"name":      "_tool_call",
+									"arguments": "{}",
+								},
+							}
+							appendToolCallToLastAssistants(&toolMsgs, toolCall)
 							toolMsgs = append(toolMsgs, map[string]any{
 								"role":         "tool",
 								"tool_call_id": callID,
@@ -1394,9 +1420,18 @@ func convertResponsesInputToAnthropic(input any) []any {
 			content := itemMap["content"]
 
 			// Handle top-level function_call_output items (no role field).
+			// Append tool_use to last assistant if one exists; otherwise create
+			// a synthetic assistant. Then emit a user message with tool_result.
 			if itemType := getString(itemMap, "type"); itemType == "function_call_output" {
 				callID := getString(itemMap, "call_id")
 				output := extractOutput(itemMap)
+				toolUse := map[string]any{
+					"type":  "tool_use",
+					"id":    callID,
+					"name":  "_tool_call",
+					"input": map[string]any{},
+				}
+				appendToolUseToLastAssistant(&msgs, toolUse)
 				msgs = append(msgs, map[string]any{
 					"role": "user",
 					"content": []any{
@@ -1412,7 +1447,8 @@ func convertResponsesInputToAnthropic(input any) []any {
 
 			switch role {
 			case "user":
-				// Separate function_call_output items from other content parts.
+				// Separate function_call_output into tool_use (appended to last
+				// assistant) + tool_result pairs.
 				if contentArr, isArr := content.([]any); isArr {
 					var userParts []any
 					var toolMsgs []any
@@ -1425,6 +1461,13 @@ func convertResponsesInputToAnthropic(input any) []any {
 						if getString(p, "type") == "function_call_output" {
 							callID := getString(p, "call_id")
 							output := extractOutput(p)
+							toolUse := map[string]any{
+								"type":  "tool_use",
+								"id":    callID,
+								"name":  "_tool_call",
+								"input": map[string]any{},
+							}
+							appendToolUseToLastAssistants(&toolMsgs, toolUse)
 							toolMsgs = append(toolMsgs, map[string]any{
 								"role": "user",
 								"content": []any{
@@ -1685,6 +1728,87 @@ func extractOutput(item map[string]any) string {
 		}
 	}
 	return output
+}
+
+// appendToolCallToLastAssistant appends a tool_call to the last assistant
+// message in msgs (in-place). If the last message is not an assistant, a
+// new synthetic assistant message is created. This avoids duplicate
+// assistant messages and merges consecutive tool_calls into one message.
+func appendToolCallToLastAssistant(msgs *[]any, toolCall map[string]any) {
+	if len(*msgs) > 0 {
+		last := (*msgs)[len(*msgs)-1].(map[string]any)
+		if getString(last, "role") == "assistant" {
+			existing := getSlice(last, "tool_calls")
+			last["tool_calls"] = append(existing, toolCall)
+			if last["content"] == nil || getString(last, "content") == "" {
+				last["content"] = nil
+			}
+			return
+		}
+	}
+	// No existing assistant: create a synthetic one.
+	*msgs = append(*msgs, map[string]any{
+		"role":       "assistant",
+		"content":    nil,
+		"tool_calls": []any{toolCall},
+	})
+}
+
+// appendToolCallToLastAssistants is like appendToolCallToLastAssistant but
+// operates on a separate slice (used inside user-branch processing where
+// tool messages are accumulated separately before being merged into msgs).
+func appendToolCallToLastAssistants(msgs *[]any, toolCall map[string]any) {
+	if len(*msgs) > 0 {
+		last := (*msgs)[len(*msgs)-1].(map[string]any)
+		if getString(last, "role") == "assistant" {
+			existing := getSlice(last, "tool_calls")
+			last["tool_calls"] = append(existing, toolCall)
+			if last["content"] == nil || getString(last, "content") == "" {
+				last["content"] = nil
+			}
+			return
+		}
+	}
+	*msgs = append(*msgs, map[string]any{
+		"role":       "assistant",
+		"content":    nil,
+		"tool_calls": []any{toolCall},
+	})
+}
+
+// appendToolUseToLastAssistant appends a tool_use block to the last
+// assistant message's content in msgs (in-place), for the Anthropic
+// direction. Creates a synthetic assistant if needed.
+func appendToolUseToLastAssistant(msgs *[]any, toolUse map[string]any) {
+	if len(*msgs) > 0 {
+		last := (*msgs)[len(*msgs)-1].(map[string]any)
+		if getString(last, "role") == "assistant" {
+			content := getSlice(last, "content")
+			last["content"] = append(content, toolUse)
+			return
+		}
+	}
+	*msgs = append(*msgs, map[string]any{
+		"role":    "assistant",
+		"content": []any{toolUse},
+	})
+}
+
+// appendToolUseToLastAssistants is like appendToolUseToLastAssistant but
+// operates on a separate slice.
+func appendToolUseToLastAssistants(msgs *[]any, toolUse map[string]any) {
+	if len(*msgs) > 0 {
+		last := (*msgs)[len(*msgs)-1].(map[string]any)
+		if getString(last, "role") == "assistant" {
+			content := getSlice(last, "content")
+			last["content"] = append(content, toolUse)
+			return
+		}
+	}
+	*msgs = append(*msgs, map[string]any{
+		"role":    "assistant",
+		"content": []any{toolUse},
+	})
 }
 
 func extractImageURL(p map[string]any) string {
