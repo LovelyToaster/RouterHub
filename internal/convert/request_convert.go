@@ -1115,25 +1115,55 @@ func convertResponsesInputToChat(input any) []any {
 			role := getString(itemMap, "role")
 			content := itemMap["content"]
 
+			itemType := getString(itemMap, "type")
+
+			// Handle top-level function_call items (no role field).
+			// These carry the real tool name/arguments and must be attached
+			// to the last assistant message as a tool_call so downstream
+			// providers receive the true call instead of a synthetic one.
+			if itemType == "function_call" {
+				callID := getString(itemMap, "call_id")
+				name := getString(itemMap, "name")
+				arguments := getString(itemMap, "arguments")
+				if arguments == "" {
+					arguments = "{}"
+				}
+				if name == "" {
+					name = "_tool_call"
+				}
+				toolCall := map[string]any{
+					"id":   callID,
+					"type": "function",
+					"function": map[string]any{
+						"name":      name,
+						"arguments": arguments,
+					},
+				}
+				appendToolCallToLastAssistant(&msgs, toolCall)
+				continue
+			}
+
 			// Handle top-level function_call_output items (no role field).
 			// The Responses API allows submitting function_call_output without
 			// repeating the preceding function_call in the input. Chat API is
 			// stateless and needs an assistant with matching tool_calls as
 			// the referent for tool_call_id.
-			// Strategy: append the tool_call to the last assistant message
-			// if one already exists; otherwise create a synthetic one.
-			if itemType := getString(itemMap, "type"); itemType == "function_call_output" {
+			// Strategy: only synthesize a placeholder assistant tool_call when
+			// no real function_call with the same call_id is present.
+			if itemType == "function_call_output" {
 				callID := getString(itemMap, "call_id")
 				output := extractOutput(itemMap)
-				toolCall := map[string]any{
-					"id":   callID,
-					"type": "function",
-					"function": map[string]any{
-						"name":      "_tool_call",
-						"arguments": "{}",
-					},
+				if !hasAssistantToolCall(msgs, callID) {
+					toolCall := map[string]any{
+						"id":   callID,
+						"type": "function",
+						"function": map[string]any{
+							"name":      "_tool_call",
+							"arguments": "{}",
+						},
+					}
+					appendToolCallToLastAssistant(&msgs, toolCall)
 				}
-				appendToolCallToLastAssistant(&msgs, toolCall)
 				msgs = append(msgs, map[string]any{
 					"role":         "tool",
 					"tool_call_id": callID,
@@ -1159,20 +1189,44 @@ func convertResponsesInputToChat(input any) []any {
 						if getString(p, "type") == "function_call_output" {
 							callID := getString(p, "call_id")
 							output := extractOutput(p)
-							toolCall := map[string]any{
-								"id":   callID,
-								"type": "function",
-								"function": map[string]any{
-									"name":      "_tool_call",
-									"arguments": "{}",
-								},
+							// Only synthesize a placeholder assistant tool_call
+							// when no real function_call with the same call_id
+							// was seen inside this user content array.
+							if !hasAssistantToolCall(toolMsgs, callID) {
+								toolCall := map[string]any{
+									"id":   callID,
+									"type": "function",
+									"function": map[string]any{
+										"name":      "_tool_call",
+										"arguments": "{}",
+									},
+								}
+								appendToolCallToLastAssistants(&toolMsgs, toolCall)
 							}
-							appendToolCallToLastAssistants(&toolMsgs, toolCall)
 							toolMsgs = append(toolMsgs, map[string]any{
 								"role":         "tool",
 								"tool_call_id": callID,
 								"content":      output,
 							})
+						} else if getString(p, "type") == "function_call" {
+							callID := getString(p, "call_id")
+							name := getString(p, "name")
+							arguments := getString(p, "arguments")
+							if arguments == "" {
+								arguments = "{}"
+							}
+							if name == "" {
+								name = "_tool_call"
+							}
+							toolCall := map[string]any{
+								"id":   callID,
+								"type": "function",
+								"function": map[string]any{
+									"name":      name,
+									"arguments": arguments,
+								},
+							}
+							appendToolCallToLastAssistants(&toolMsgs, toolCall)
 						} else {
 							userParts = append(userParts, part)
 						}
@@ -1728,6 +1782,24 @@ func extractOutput(item map[string]any) string {
 		}
 	}
 	return output
+}
+
+// hasAssistantToolCall reports whether any assistant message in msgs already
+// contains a tool_call whose id matches callID. Used to decide whether a
+// synthetic placeholder tool_call must be created for a function_call_output.
+func hasAssistantToolCall(msgs []any, callID string) bool {
+	for _, m := range msgs {
+		mm, ok := m.(map[string]any)
+		if !ok || getString(mm, "role") != "assistant" {
+			continue
+		}
+		for _, tc := range getSlice(mm, "tool_calls") {
+			if tcm, ok := tc.(map[string]any); ok && getString(tcm, "id") == callID {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // appendToolCallToLastAssistant appends a tool_call to the last assistant

@@ -2696,3 +2696,151 @@ func TestConvertResponsesToChat_FunctionCallOutput_EmptyOutput(t *testing.T) {
 		t.Errorf("expected msg[2] content '', got '%s'", getString(msg2, "content"))
 	}
 }
+
+// collectToolCalls returns every tool_call found inside assistant messages of msgs.
+func collectToolCalls(msgs []any) []map[string]any {
+	var calls []map[string]any
+	for _, m := range msgs {
+		mm, ok := m.(map[string]any)
+		if !ok || getString(mm, "role") != "assistant" {
+			continue
+		}
+		for _, tc := range getSlice(mm, "tool_calls") {
+			if tcm, ok := tc.(map[string]any); ok {
+				calls = append(calls, tcm)
+			}
+		}
+	}
+	return calls
+}
+
+// toolCallFunc is a convenience accessor for a tool_call's nested function map.
+func toolCallFunc(tc map[string]any) map[string]any {
+	if f, ok := tc["function"].(map[string]any); ok {
+		return f
+	}
+	return map[string]any{}
+}
+
+// Scenario A: top-level function_call items carry real name/arguments.
+// The converter must attach them to assistant tool_calls and must NOT
+// synthesize the placeholder "_tool_call".
+func TestConvertResponsesToChat_TopLevelFunctionCallRealName(t *testing.T) {
+	responsesReq := []byte(`{
+		"model": "deepseek-chat",
+		"input": [
+			{"role": "user", "content": [{"type": "input_text", "text": "Run ls"}]},
+			{"type": "function_call", "call_id": "c1", "name": "bash", "arguments": "{\"cmd\":\"ls\"}"},
+			{"type": "function_call_output", "call_id": "c1", "output": "file1 file2"},
+			{"role": "user", "content": [{"type": "input_text", "text": "Now grep"}]},
+			{"type": "function_call", "call_id": "c2", "name": "grep", "arguments": "{\"cmd\":\"grep x\"}"},
+			{"type": "function_call_output", "call_id": "c2", "output": "x found"}
+		]
+	}`)
+
+	result, err := ConvertRequest(responsesReq, "openai-responses", "openai-chat-completions")
+	if err != nil {
+		t.Fatalf("ConvertRequest failed: %v", err)
+	}
+
+	var out map[string]any
+	if err := json.Unmarshal(result, &out); err != nil {
+		t.Fatalf("invalid result JSON: %v", err)
+	}
+
+	msgs := getSlice(out, "messages")
+	// user + assistant(bash c1) + tool(c1) + user + assistant(grep c2) + tool(c2) = 6
+	if len(msgs) != 6 {
+		t.Fatalf("expected 6 messages, got %d", len(msgs))
+	}
+
+	calls := collectToolCalls(msgs)
+	if len(calls) != 2 {
+		t.Fatalf("expected 2 tool_calls, got %d", len(calls))
+	}
+
+	for _, tc := range calls {
+		fn := toolCallFunc(tc)
+		name := getString(fn, "name")
+		if name == "_tool_call" {
+			t.Errorf("unexpected synthetic placeholder tool_call '_tool_call' present")
+		}
+	}
+
+	// Verify the real names and arguments are preserved.
+	var sawBash, sawGrep bool
+	for _, tc := range calls {
+		fn := toolCallFunc(tc)
+		switch getString(fn, "name") {
+		case "bash":
+			sawBash = true
+			if getString(tc, "id") != "c1" {
+				t.Errorf("expected bash tool_call id 'c1', got '%s'", getString(tc, "id"))
+			}
+			if !strings.Contains(getString(fn, "arguments"), "ls") {
+				t.Errorf("expected bash tool_call arguments to contain 'ls', got '%s'", getString(fn, "arguments"))
+			}
+		case "grep":
+			sawGrep = true
+			if getString(tc, "id") != "c2" {
+				t.Errorf("expected grep tool_call id 'c2', got '%s'", getString(tc, "id"))
+			}
+			if !strings.Contains(getString(fn, "arguments"), "grep x") {
+				t.Errorf("expected grep tool_call arguments to contain 'grep x', got '%s'", getString(fn, "arguments"))
+			}
+		}
+	}
+	if !sawBash {
+		t.Errorf("expected a tool_call with name 'bash'")
+	}
+	if !sawGrep {
+		t.Errorf("expected a tool_call with name 'grep'")
+	}
+
+	// Verify the two tool messages reference the correct call_ids.
+	toolMsg0 := msgs[2].(map[string]any)
+	if getString(toolMsg0, "tool_call_id") != "c1" {
+		t.Errorf("expected tool[0] tool_call_id 'c1', got '%s'", getString(toolMsg0, "tool_call_id"))
+	}
+	toolMsg1 := msgs[5].(map[string]any)
+	if getString(toolMsg1, "tool_call_id") != "c2" {
+		t.Errorf("expected tool[1] tool_call_id 'c2', got '%s'", getString(toolMsg1, "tool_call_id"))
+	}
+}
+
+// Scenario B (regression): function_call_output with NO matching function_call
+// must still fall back to a synthetic "_tool_call" placeholder.
+func TestConvertResponsesToChat_FunctionCallOutputOnlyFallsBackToSynthetic(t *testing.T) {
+	responsesReq := []byte(`{
+		"model": "gpt-4",
+		"input": [
+			{"role": "user", "content": [{"type": "input_text", "text": "Hi"}]},
+			{"type": "function_call_output", "call_id": "call_x", "output": "result"}
+		]
+	}`)
+
+	result, err := ConvertRequest(responsesReq, "openai-responses", "openai-chat-completions")
+	if err != nil {
+		t.Fatalf("ConvertRequest failed: %v", err)
+	}
+
+	var out map[string]any
+	if err := json.Unmarshal(result, &out); err != nil {
+		t.Fatalf("invalid result JSON: %v", err)
+	}
+
+	msgs := getSlice(out, "messages")
+	// user + synthetic assistant + tool = 3 messages
+	if len(msgs) != 3 {
+		t.Fatalf("expected 3 messages, got %d", len(msgs))
+	}
+
+	calls := collectToolCalls(msgs)
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 tool_call (synthetic), got %d", len(calls))
+	}
+	fn := toolCallFunc(calls[0])
+	if getString(fn, "name") != "_tool_call" {
+		t.Errorf("expected fallback synthetic name '_tool_call', got '%s'", getString(fn, "name"))
+	}
+}
