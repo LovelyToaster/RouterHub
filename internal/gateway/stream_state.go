@@ -836,7 +836,7 @@ func (s *streamState) writeClosure(w http.ResponseWriter, flusher http.Flusher, 
 		})
 
 	case protocol.ProtocolResponses:
-		status := "completed"
+		var status string
 		switch finishReason {
 		case "length":
 			status = "incomplete"

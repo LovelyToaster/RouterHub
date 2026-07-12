@@ -48,6 +48,14 @@ func parseSSE(body string) []sseEvent {
 	return events
 }
 
+// mustUnmarshal unmarshals JSON and calls t.Fatal on error.
+func mustUnmarshal(t *testing.T, data []byte, v any) {
+	t.Helper()
+	if err := json.Unmarshal(data, v); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // flushRecorder wraps httptest.ResponseRecorder to implement http.Flusher.
 type flushRecorder struct {
 	*httptest.ResponseRecorder
@@ -135,7 +143,7 @@ func TestStreamState_ChatToResponses_TextOnly(t *testing.T) {
 		t.Errorf("event[0]: expected response.created, got %q", events[0].Event)
 	}
 	var e0 map[string]any
-	json.Unmarshal(events[0].Data, &e0)
+	mustUnmarshal(t, events[0].Data, &e0)
 	if e0["type"] != "response.created" {
 		t.Errorf("event[0].type: expected response.created, got %v", e0["type"])
 	}
@@ -160,7 +168,7 @@ func TestStreamState_ChatToResponses_TextOnly(t *testing.T) {
 		t.Errorf("event[2]: expected response.output_item.added, got %q", events[2].Event)
 	}
 	var e2 map[string]any
-	json.Unmarshal(events[2].Data, &e2)
+	mustUnmarshal(t, events[2].Data, &e2)
 	if e2["output_index"] != float64(0) {
 		t.Errorf("event[2].output_index: expected 0, got %v", e2["output_index"])
 	}
@@ -182,7 +190,7 @@ func TestStreamState_ChatToResponses_TextOnly(t *testing.T) {
 		t.Errorf("event[4]: expected response.output_text.delta, got %q", events[4].Event)
 	}
 	var e4 map[string]any
-	json.Unmarshal(events[4].Data, &e4)
+	mustUnmarshal(t, events[4].Data, &e4)
 	if e4["delta"] != "Hello" {
 		t.Errorf("event[4].delta: expected Hello, got %v", e4["delta"])
 	}
@@ -192,7 +200,7 @@ func TestStreamState_ChatToResponses_TextOnly(t *testing.T) {
 		t.Errorf("event[5]: expected response.output_text.delta, got %q", events[5].Event)
 	}
 	var e5 map[string]any
-	json.Unmarshal(events[5].Data, &e5)
+	mustUnmarshal(t, events[5].Data, &e5)
 	if e5["delta"] != " world" {
 		t.Errorf("event[5].delta: expected ' world', got %v", e5["delta"])
 	}
@@ -202,7 +210,7 @@ func TestStreamState_ChatToResponses_TextOnly(t *testing.T) {
 		t.Errorf("event[6]: expected response.output_text.done, got %q", events[6].Event)
 	}
 	var e6 map[string]any
-	json.Unmarshal(events[6].Data, &e6)
+	mustUnmarshal(t, events[6].Data, &e6)
 	if e6["text"] != "Hello world" {
 		t.Errorf("event[6].text: expected 'Hello world', got %v", e6["text"])
 	}
@@ -217,7 +225,7 @@ func TestStreamState_ChatToResponses_TextOnly(t *testing.T) {
 		t.Errorf("event[8]: expected response.output_item.done, got %q", events[8].Event)
 	}
 	var e8 map[string]any
-	json.Unmarshal(events[8].Data, &e8)
+	mustUnmarshal(t, events[8].Data, &e8)
 	item8, _ := e8["item"].(map[string]any)
 	if item8["status"] != "completed" {
 		t.Errorf("event[8].item.status: expected completed, got %v", item8["status"])
@@ -228,7 +236,7 @@ func TestStreamState_ChatToResponses_TextOnly(t *testing.T) {
 		t.Errorf("event[9]: expected response.completed, got %q", events[9].Event)
 	}
 	var e9 map[string]any
-	json.Unmarshal(events[9].Data, &e9)
+	mustUnmarshal(t, events[9].Data, &e9)
 	if e9["type"] != "response.completed" {
 		t.Errorf("event[9].type: expected response.completed, got %v", e9["type"])
 	}
@@ -315,7 +323,7 @@ func TestStreamState_ChatToAnthropic_TextOnly(t *testing.T) {
 		t.Errorf("event[0]: expected message_start, got %q", events[0].Event)
 	}
 	var e0 map[string]any
-	json.Unmarshal(events[0].Data, &e0)
+	mustUnmarshal(t, events[0].Data, &e0)
 	if e0["type"] != "message_start" {
 		t.Errorf("event[0].type: expected message_start, got %v", e0["type"])
 	}
@@ -335,7 +343,7 @@ func TestStreamState_ChatToAnthropic_TextOnly(t *testing.T) {
 		t.Errorf("event[1]: expected content_block_start, got %q", events[1].Event)
 	}
 	var e1 map[string]any
-	json.Unmarshal(events[1].Data, &e1)
+	mustUnmarshal(t, events[1].Data, &e1)
 	if e1["index"] != float64(0) {
 		t.Errorf("event[1].index: expected 0, got %v", e1["index"])
 	}
@@ -349,7 +357,7 @@ func TestStreamState_ChatToAnthropic_TextOnly(t *testing.T) {
 		t.Errorf("event[2]: expected content_block_delta, got %q", events[2].Event)
 	}
 	var e2 map[string]any
-	json.Unmarshal(events[2].Data, &e2)
+	mustUnmarshal(t, events[2].Data, &e2)
 	if e2["index"] != float64(0) {
 		t.Errorf("event[2].index: expected 0, got %v", e2["index"])
 	}
@@ -366,7 +374,7 @@ func TestStreamState_ChatToAnthropic_TextOnly(t *testing.T) {
 		t.Errorf("event[3]: expected content_block_stop, got %q", events[3].Event)
 	}
 	var e3 map[string]any
-	json.Unmarshal(events[3].Data, &e3)
+	mustUnmarshal(t, events[3].Data, &e3)
 	if e3["index"] != float64(0) {
 		t.Errorf("event[3].index: expected 0, got %v", e3["index"])
 	}
@@ -376,7 +384,7 @@ func TestStreamState_ChatToAnthropic_TextOnly(t *testing.T) {
 		t.Errorf("event[4]: expected message_delta, got %q", events[4].Event)
 	}
 	var e4 map[string]any
-	json.Unmarshal(events[4].Data, &e4)
+	mustUnmarshal(t, events[4].Data, &e4)
 	delta4, _ := e4["delta"].(map[string]any)
 	if delta4["stop_reason"] != "end_turn" {
 		t.Errorf("event[4].delta.stop_reason: expected end_turn, got %v", delta4["stop_reason"])
@@ -387,7 +395,7 @@ func TestStreamState_ChatToAnthropic_TextOnly(t *testing.T) {
 		t.Errorf("event[5]: expected message_stop, got %q", events[5].Event)
 	}
 	var e5 map[string]any
-	json.Unmarshal(events[5].Data, &e5)
+	mustUnmarshal(t, events[5].Data, &e5)
 	if e5["type"] != "message_stop" {
 		t.Errorf("event[5].type: expected message_stop, got %v", e5["type"])
 	}
@@ -450,7 +458,7 @@ func TestStreamState_ChatToAnthropic_ToolCallFragments(t *testing.T) {
 		t.Errorf("event[1]: expected content_block_start, got %q", events[1].Event)
 	}
 	var e1 map[string]any
-	json.Unmarshal(events[1].Data, &e1)
+	mustUnmarshal(t, events[1].Data, &e1)
 	if e1["index"] != float64(1) {
 		t.Errorf("event[1].index: expected 1 (tool block), got %v", e1["index"])
 	}
@@ -470,7 +478,7 @@ func TestStreamState_ChatToAnthropic_ToolCallFragments(t *testing.T) {
 		t.Errorf("event[2]: expected content_block_delta, got %q", events[2].Event)
 	}
 	var e2 map[string]any
-	json.Unmarshal(events[2].Data, &e2)
+	mustUnmarshal(t, events[2].Data, &e2)
 	if e2["index"] != float64(1) {
 		t.Errorf("event[2].index: expected 1, got %v", e2["index"])
 	}
@@ -487,7 +495,7 @@ func TestStreamState_ChatToAnthropic_ToolCallFragments(t *testing.T) {
 		t.Errorf("event[3]: expected content_block_delta, got %q", events[3].Event)
 	}
 	var e3 map[string]any
-	json.Unmarshal(events[3].Data, &e3)
+	mustUnmarshal(t, events[3].Data, &e3)
 	delta3, _ := e3["delta"].(map[string]any)
 	if delta3["partial_json"] != `ation":"SF"}` {
 		t.Errorf("event[3].delta.partial_json: expected 'ation\":\"SF\"}', got %v", delta3["partial_json"])
@@ -498,7 +506,7 @@ func TestStreamState_ChatToAnthropic_ToolCallFragments(t *testing.T) {
 		t.Errorf("event[4]: expected content_block_stop, got %q", events[4].Event)
 	}
 	var e4 map[string]any
-	json.Unmarshal(events[4].Data, &e4)
+	mustUnmarshal(t, events[4].Data, &e4)
 	if e4["index"] != float64(1) {
 		t.Errorf("event[4].index: expected 1, got %v", e4["index"])
 	}
@@ -508,7 +516,7 @@ func TestStreamState_ChatToAnthropic_ToolCallFragments(t *testing.T) {
 		t.Errorf("event[5]: expected message_delta, got %q", events[5].Event)
 	}
 	var e5 map[string]any
-	json.Unmarshal(events[5].Data, &e5)
+	mustUnmarshal(t, events[5].Data, &e5)
 	delta5, _ := e5["delta"].(map[string]any)
 	if delta5["stop_reason"] != "tool_use" {
 		t.Errorf("event[5].delta.stop_reason: expected tool_use, got %v", delta5["stop_reason"])
@@ -582,7 +590,7 @@ func TestStreamState_ResponsesToChat_ToolCall(t *testing.T) {
 		t.Errorf("event[0]: expected empty event (Chat target), got %q", events[0].Event)
 	}
 	var e0 map[string]any
-	json.Unmarshal(events[0].Data, &e0)
+	mustUnmarshal(t, events[0].Data, &e0)
 	choices0, _ := e0["choices"].([]any)
 	if len(choices0) != 1 {
 		t.Fatalf("event[0].choices: expected 1, got %d", len(choices0))
@@ -616,7 +624,7 @@ func TestStreamState_ResponsesToChat_ToolCall(t *testing.T) {
 		t.Errorf("event[1]: expected empty event, got %q", events[1].Event)
 	}
 	var e1 map[string]any
-	json.Unmarshal(events[1].Data, &e1)
+	mustUnmarshal(t, events[1].Data, &e1)
 	choices1, _ := e1["choices"].([]any)
 	ch1, _ := choices1[0].(map[string]any)
 	delta1, _ := ch1["delta"].(map[string]any)
@@ -632,7 +640,7 @@ func TestStreamState_ResponsesToChat_ToolCall(t *testing.T) {
 		t.Errorf("event[2]: expected empty event, got %q", events[2].Event)
 	}
 	var e2 map[string]any
-	json.Unmarshal(events[2].Data, &e2)
+	mustUnmarshal(t, events[2].Data, &e2)
 	choices2, _ := e2["choices"].([]any)
 	ch2, _ := choices2[0].(map[string]any)
 	if ch2["finish_reason"] != "tool_calls" {
@@ -712,7 +720,7 @@ func TestStreamState_AnthropicToChat_TextOnly(t *testing.T) {
 		t.Errorf("event[0]: expected empty event (Chat target), got %q", events[0].Event)
 	}
 	var e0 map[string]any
-	json.Unmarshal(events[0].Data, &e0)
+	mustUnmarshal(t, events[0].Data, &e0)
 	choices0, _ := e0["choices"].([]any)
 	if len(choices0) != 1 {
 		t.Fatalf("event[0].choices: expected 1, got %d", len(choices0))
@@ -728,7 +736,7 @@ func TestStreamState_AnthropicToChat_TextOnly(t *testing.T) {
 		t.Errorf("event[1]: expected empty event, got %q", events[1].Event)
 	}
 	var e1 map[string]any
-	json.Unmarshal(events[1].Data, &e1)
+	mustUnmarshal(t, events[1].Data, &e1)
 	choices1, _ := e1["choices"].([]any)
 	ch1, _ := choices1[0].(map[string]any)
 	if ch1["finish_reason"] != "stop" {
@@ -800,7 +808,7 @@ func TestStreamState_ChatToAnthropic_ReasoningThenText(t *testing.T) {
 		t.Errorf("event[1]: expected content_block_start, got %q", events[1].Event)
 	}
 	var e1 map[string]any
-	json.Unmarshal(events[1].Data, &e1)
+	mustUnmarshal(t, events[1].Data, &e1)
 	if e1["index"] != float64(0) {
 		t.Errorf("event[1].index: expected 0, got %v", e1["index"])
 	}
@@ -814,7 +822,7 @@ func TestStreamState_ChatToAnthropic_ReasoningThenText(t *testing.T) {
 		t.Errorf("event[2]: expected content_block_delta, got %q", events[2].Event)
 	}
 	var e2 map[string]any
-	json.Unmarshal(events[2].Data, &e2)
+	mustUnmarshal(t, events[2].Data, &e2)
 	if e2["index"] != float64(0) {
 		t.Errorf("event[2].index: expected 0, got %v", e2["index"])
 	}
@@ -831,7 +839,7 @@ func TestStreamState_ChatToAnthropic_ReasoningThenText(t *testing.T) {
 		t.Errorf("event[3]: expected content_block_delta, got %q", events[3].Event)
 	}
 	var e3 map[string]any
-	json.Unmarshal(events[3].Data, &e3)
+	mustUnmarshal(t, events[3].Data, &e3)
 	delta3, _ := e3["delta"].(map[string]any)
 	if delta3["thinking"] != "啊" {
 		t.Errorf("event[3].delta.thinking: expected '啊', got %v", delta3["thinking"])
@@ -842,7 +850,7 @@ func TestStreamState_ChatToAnthropic_ReasoningThenText(t *testing.T) {
 		t.Errorf("event[4]: expected content_block_stop, got %q", events[4].Event)
 	}
 	var e4 map[string]any
-	json.Unmarshal(events[4].Data, &e4)
+	mustUnmarshal(t, events[4].Data, &e4)
 	if e4["index"] != float64(0) {
 		t.Errorf("event[4].index: expected 0, got %v", e4["index"])
 	}
@@ -852,7 +860,7 @@ func TestStreamState_ChatToAnthropic_ReasoningThenText(t *testing.T) {
 		t.Errorf("event[5]: expected content_block_start, got %q", events[5].Event)
 	}
 	var e5 map[string]any
-	json.Unmarshal(events[5].Data, &e5)
+	mustUnmarshal(t, events[5].Data, &e5)
 	if e5["index"] != float64(1) {
 		t.Errorf("event[5].index: expected 1, got %v", e5["index"])
 	}
@@ -866,7 +874,7 @@ func TestStreamState_ChatToAnthropic_ReasoningThenText(t *testing.T) {
 		t.Errorf("event[6]: expected content_block_delta, got %q", events[6].Event)
 	}
 	var e6 map[string]any
-	json.Unmarshal(events[6].Data, &e6)
+	mustUnmarshal(t, events[6].Data, &e6)
 	if e6["index"] != float64(1) {
 		t.Errorf("event[6].index: expected 1, got %v", e6["index"])
 	}
@@ -883,7 +891,7 @@ func TestStreamState_ChatToAnthropic_ReasoningThenText(t *testing.T) {
 		t.Errorf("event[7]: expected content_block_stop, got %q", events[7].Event)
 	}
 	var e7 map[string]any
-	json.Unmarshal(events[7].Data, &e7)
+	mustUnmarshal(t, events[7].Data, &e7)
 	if e7["index"] != float64(1) {
 		t.Errorf("event[7].index: expected 1, got %v", e7["index"])
 	}
@@ -893,7 +901,7 @@ func TestStreamState_ChatToAnthropic_ReasoningThenText(t *testing.T) {
 		t.Errorf("event[8]: expected message_delta, got %q", events[8].Event)
 	}
 	var e8 map[string]any
-	json.Unmarshal(events[8].Data, &e8)
+	mustUnmarshal(t, events[8].Data, &e8)
 	delta8, _ := e8["delta"].(map[string]any)
 	if delta8["stop_reason"] != "end_turn" {
 		t.Errorf("event[8].delta.stop_reason: expected end_turn, got %v", delta8["stop_reason"])
@@ -986,7 +994,7 @@ func TestStreamState_AnthropicToChat_ThinkingWithSignature(t *testing.T) {
 		t.Errorf("event[0]: expected empty event (Chat target), got %q", events[0].Event)
 	}
 	var e0 map[string]any
-	json.Unmarshal(events[0].Data, &e0)
+	mustUnmarshal(t, events[0].Data, &e0)
 	choices0, _ := e0["choices"].([]any)
 	if len(choices0) != 1 {
 		t.Fatalf("event[0].choices: expected 1, got %d", len(choices0))
@@ -1002,7 +1010,7 @@ func TestStreamState_AnthropicToChat_ThinkingWithSignature(t *testing.T) {
 		t.Errorf("event[1]: expected empty event (Chat target), got %q", events[1].Event)
 	}
 	var e1 map[string]any
-	json.Unmarshal(events[1].Data, &e1)
+	mustUnmarshal(t, events[1].Data, &e1)
 	choices1, _ := e1["choices"].([]any)
 	ch1, _ := choices1[0].(map[string]any)
 	delta1, _ := ch1["delta"].(map[string]any)
@@ -1015,7 +1023,7 @@ func TestStreamState_AnthropicToChat_ThinkingWithSignature(t *testing.T) {
 		t.Errorf("event[2]: expected empty event (Chat target), got %q", events[2].Event)
 	}
 	var e2 map[string]any
-	json.Unmarshal(events[2].Data, &e2)
+	mustUnmarshal(t, events[2].Data, &e2)
 	choices2, _ := e2["choices"].([]any)
 	ch2, _ := choices2[0].(map[string]any)
 	if ch2["finish_reason"] != "stop" {
@@ -1092,7 +1100,7 @@ func TestStreamState_ChatToResponses_ReasoningThenText(t *testing.T) {
 		t.Errorf("event[2]: expected response.output_item.added, got %q", events[2].Event)
 	}
 	var e2 map[string]any
-	json.Unmarshal(events[2].Data, &e2)
+	mustUnmarshal(t, events[2].Data, &e2)
 	if e2["output_index"] != float64(0) {
 		t.Errorf("event[2].output_index: expected 0, got %v", e2["output_index"])
 	}
@@ -1114,7 +1122,7 @@ func TestStreamState_ChatToResponses_ReasoningThenText(t *testing.T) {
 		t.Errorf("event[4]: expected response.reasoning_text.delta, got %q", events[4].Event)
 	}
 	var e4 map[string]any
-	json.Unmarshal(events[4].Data, &e4)
+	mustUnmarshal(t, events[4].Data, &e4)
 	if e4["delta"] != "想" {
 		t.Errorf("event[4].delta: expected '想', got %v", e4["delta"])
 	}
@@ -1124,7 +1132,7 @@ func TestStreamState_ChatToResponses_ReasoningThenText(t *testing.T) {
 		t.Errorf("event[5]: expected response.reasoning_text.delta, got %q", events[5].Event)
 	}
 	var e5 map[string]any
-	json.Unmarshal(events[5].Data, &e5)
+	mustUnmarshal(t, events[5].Data, &e5)
 	if e5["delta"] != "啊" {
 		t.Errorf("event[5].delta: expected '啊', got %v", e5["delta"])
 	}
@@ -1134,7 +1142,7 @@ func TestStreamState_ChatToResponses_ReasoningThenText(t *testing.T) {
 		t.Errorf("event[6]: expected response.reasoning_text.done, got %q", events[6].Event)
 	}
 	var e6 map[string]any
-	json.Unmarshal(events[6].Data, &e6)
+	mustUnmarshal(t, events[6].Data, &e6)
 	if e6["text"] != "想啊" {
 		t.Errorf("event[6].text: expected '想啊', got %v", e6["text"])
 	}
@@ -1149,7 +1157,7 @@ func TestStreamState_ChatToResponses_ReasoningThenText(t *testing.T) {
 		t.Errorf("event[8]: expected response.output_item.done, got %q", events[8].Event)
 	}
 	var e8 map[string]any
-	json.Unmarshal(events[8].Data, &e8)
+	mustUnmarshal(t, events[8].Data, &e8)
 	if e8["output_index"] != float64(0) {
 		t.Errorf("event[8].output_index: expected 0, got %v", e8["output_index"])
 	}
@@ -1166,7 +1174,7 @@ func TestStreamState_ChatToResponses_ReasoningThenText(t *testing.T) {
 		t.Errorf("event[9]: expected response.output_item.added, got %q", events[9].Event)
 	}
 	var e9 map[string]any
-	json.Unmarshal(events[9].Data, &e9)
+	mustUnmarshal(t, events[9].Data, &e9)
 	if e9["output_index"] != float64(1) {
 		t.Errorf("event[9].output_index: expected 1, got %v", e9["output_index"])
 	}
@@ -1185,7 +1193,7 @@ func TestStreamState_ChatToResponses_ReasoningThenText(t *testing.T) {
 		t.Errorf("event[11]: expected response.output_text.delta, got %q", events[11].Event)
 	}
 	var e11 map[string]any
-	json.Unmarshal(events[11].Data, &e11)
+	mustUnmarshal(t, events[11].Data, &e11)
 	if e11["delta"] != "回答" {
 		t.Errorf("event[11].delta: expected '回答', got %v", e11["delta"])
 	}
@@ -1195,7 +1203,7 @@ func TestStreamState_ChatToResponses_ReasoningThenText(t *testing.T) {
 		t.Errorf("event[12]: expected response.output_text.done, got %q", events[12].Event)
 	}
 	var e12 map[string]any
-	json.Unmarshal(events[12].Data, &e12)
+	mustUnmarshal(t, events[12].Data, &e12)
 	if e12["text"] != "回答" {
 		t.Errorf("event[12].text: expected '回答', got %v", e12["text"])
 	}
@@ -1210,7 +1218,7 @@ func TestStreamState_ChatToResponses_ReasoningThenText(t *testing.T) {
 		t.Errorf("event[14]: expected response.output_item.done, got %q", events[14].Event)
 	}
 	var e14 map[string]any
-	json.Unmarshal(events[14].Data, &e14)
+	mustUnmarshal(t, events[14].Data, &e14)
 	if e14["output_index"] != float64(1) {
 		t.Errorf("event[14].output_index: expected 1, got %v", e14["output_index"])
 	}
@@ -1224,7 +1232,7 @@ func TestStreamState_ChatToResponses_ReasoningThenText(t *testing.T) {
 		t.Errorf("event[15]: expected response.completed, got %q", events[15].Event)
 	}
 	var e15 map[string]any
-	json.Unmarshal(events[15].Data, &e15)
+	mustUnmarshal(t, events[15].Data, &e15)
 	resp15, _ := e15["response"].(map[string]any)
 	if resp15 == nil {
 		t.Fatal("event[15].response is nil")
