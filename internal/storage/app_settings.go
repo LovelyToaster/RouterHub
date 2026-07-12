@@ -18,6 +18,19 @@ func GetAppSetting(db *sql.DB, key string) (*AppSetting, error) {
 	return &s, nil
 }
 
+// GetAppSettingString returns the string value of an app setting, falling back
+// to def when the setting is missing or empty.
+func GetAppSettingString(db *sql.DB, key, def string) string {
+	s, err := GetAppSetting(db, key)
+	if err != nil {
+		return def
+	}
+	if s == nil || s.Value == "" {
+		return def
+	}
+	return s.Value
+}
+
 func SetAppSetting(db *sql.DB, key, value, updatedAt string) error {
 	_, err := db.Exec(
 		`INSERT INTO app_settings (key, value, updated_at) VALUES (?, ?, ?)

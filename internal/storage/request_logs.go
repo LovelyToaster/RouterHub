@@ -3,16 +3,18 @@ package storage
 import (
 	"database/sql"
 	"fmt"
+	"strconv"
 	"time"
 )
 
 func InsertRequestLog(db *sql.DB, log *RequestLog) error {
 	_, err := db.Exec(
-		`INSERT INTO request_logs (request_id, provider_name, provider_type, inbound_protocol, requested_model, actual_model, stream, status, error_message, created_at, finished_at, time_to_first_token_ms, total_duration_ms, input_tokens, output_tokens, cached_tokens, cache_write_tokens, total_tokens, client_ip, gateway_api_key_name)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO request_logs (request_id, provider_name, provider_type, inbound_protocol, requested_model, actual_model, stream, status, error_message, created_at, finished_at, time_to_first_token_ms, total_duration_ms, input_tokens, output_tokens, cached_tokens, cache_write_tokens, total_tokens, client_ip, gateway_api_key_name, http_status, request_body, response_body)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		log.RequestID, log.ProviderName, log.ProviderType, log.InboundProtocol, log.RequestedModel, log.ActualModel,
 		boolToInt(log.Stream), log.Status, log.ErrorMessage, log.CreatedAt, log.FinishedAt,
 		log.TimeToFirstTokenMs, log.TotalDurationMs, log.InputTokens, log.OutputTokens, log.CachedTokens, log.CacheWriteTokens, log.TotalTokens, log.ClientIP, log.GatewayAPIKeyName,
+		log.HTTPStatus, log.RequestBody, log.ResponseBody,
 	)
 	if err != nil {
 		return fmt.Errorf("insert request log: %w", err)
@@ -25,9 +27,10 @@ func InsertRequestLog(db *sql.DB, log *RequestLog) error {
 // a "pending" row with success/error status plus timing and usage stats.
 func UpdateRequestLog(db *sql.DB, log *RequestLog) error {
 	_, err := db.Exec(
-		`UPDATE request_logs SET actual_model=?, status=?, error_message=?, finished_at=?, time_to_first_token_ms=?, total_duration_ms=?, input_tokens=?, output_tokens=?, cached_tokens=?, cache_write_tokens=?, total_tokens=? WHERE request_id=?`,
+		`UPDATE request_logs SET actual_model=?, status=?, error_message=?, finished_at=?, time_to_first_token_ms=?, total_duration_ms=?, input_tokens=?, output_tokens=?, cached_tokens=?, cache_write_tokens=?, total_tokens=?, http_status=?, request_body=?, response_body=? WHERE request_id=?`,
 		log.ActualModel, log.Status, log.ErrorMessage, log.FinishedAt, log.TimeToFirstTokenMs, log.TotalDurationMs,
-		log.InputTokens, log.OutputTokens, log.CachedTokens, log.CacheWriteTokens, log.TotalTokens, log.RequestID,
+		log.InputTokens, log.OutputTokens, log.CachedTokens, log.CacheWriteTokens, log.TotalTokens,
+		log.HTTPStatus, log.RequestBody, log.ResponseBody, log.RequestID,
 	)
 	if err != nil {
 		return fmt.Errorf("update request log: %w", err)
@@ -60,7 +63,7 @@ func ListRequestLogs(db *sql.DB, filter RequestLogFilter) ([]RequestLog, error) 
 		filter.Limit = 50
 	}
 	rows, err := db.Query(
-		`SELECT id, request_id, provider_name, provider_type, inbound_protocol, requested_model, actual_model, stream, status, error_message, created_at, finished_at, time_to_first_token_ms, total_duration_ms, input_tokens, output_tokens, cached_tokens, cache_write_tokens, total_tokens, client_ip, gateway_api_key_name
+		`SELECT id, request_id, provider_name, provider_type, inbound_protocol, requested_model, actual_model, stream, status, error_message, created_at, finished_at, time_to_first_token_ms, total_duration_ms, input_tokens, output_tokens, cached_tokens, cache_write_tokens, total_tokens, client_ip, gateway_api_key_name, http_status, request_body, response_body
 		 FROM request_logs ORDER BY created_at DESC LIMIT ? OFFSET ?`,
 		filter.Limit, filter.Offset,
 	)
@@ -74,7 +77,8 @@ func ListRequestLogs(db *sql.DB, filter RequestLogFilter) ([]RequestLog, error) 
 		var l RequestLog
 		if err := rows.Scan(&l.ID, &l.RequestID, &l.ProviderName, &l.ProviderType, &l.InboundProtocol, &l.RequestedModel, &l.ActualModel,
 			&l.Stream, &l.Status, &l.ErrorMessage, &l.CreatedAt, &l.FinishedAt,
-			&l.TimeToFirstTokenMs, &l.TotalDurationMs, &l.InputTokens, &l.OutputTokens, &l.CachedTokens, &l.CacheWriteTokens, &l.TotalTokens, &l.ClientIP, &l.GatewayAPIKeyName); err != nil {
+			&l.TimeToFirstTokenMs, &l.TotalDurationMs, &l.InputTokens, &l.OutputTokens, &l.CachedTokens, &l.CacheWriteTokens, &l.TotalTokens, &l.ClientIP, &l.GatewayAPIKeyName,
+			&l.HTTPStatus, &l.RequestBody, &l.ResponseBody); err != nil {
 			return nil, fmt.Errorf("scan request log: %w", err)
 		}
 		logs = append(logs, l)
@@ -437,4 +441,47 @@ func countActiveDays(db *sql.DB, start, end string, loc *time.Location) (int64, 
 		return 0, err
 	}
 	return int64(len(dates)), nil
+}
+
+// DeleteOldRequestLogs 删除 created_at 早于 cutoff 的请求日志，返回删除行数。
+func DeleteOldRequestLogs(db *sql.DB, days int) (int64, error) {
+	cutoff := time.Now().UTC().AddDate(0, 0, -days).Format(time.RFC3339)
+	res, err := db.Exec(`DELETE FROM request_logs WHERE created_at < ?`, cutoff)
+	if err != nil {
+		return 0, fmt.Errorf("delete old request logs: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("rows affected: %w", err)
+	}
+	return n, nil
+}
+
+// StartRetentionWorker 周期性清理超龄请求日志。interval 建议 time.Hour。
+func StartRetentionWorker(db *sql.DB, interval time.Duration) {
+	// 启动立即执行一次
+	runRetention(db)
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for range ticker.C {
+		runRetention(db)
+	}
+}
+
+func runRetention(db *sql.DB) {
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Printf("retention worker panic: %v\n", r)
+		}
+	}()
+	v := GetAppSettingString(db, "log.request_log_retention_days", "0")
+	days, err := strconv.Atoi(v)
+	if err != nil || days <= 0 {
+		return
+	}
+	if n, err := DeleteOldRequestLogs(db, days); err != nil {
+		fmt.Printf("retention cleanup error: %v\n", err)
+	} else if n > 0 {
+		fmt.Printf("retention cleanup removed %d request logs older than %d days\n", n, days)
+	}
 }

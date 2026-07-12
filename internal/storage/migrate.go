@@ -131,6 +131,10 @@ func Migrate(db *sql.DB) error {
 		return fmt.Errorf("ensure inbound_protocol column: %w", err)
 	}
 
+	if err := ensureRequestLogsExtraColumns(db); err != nil {
+		return fmt.Errorf("ensure extra columns: %w", err)
+	}
+
 	if err := runDataMigrations(db); err != nil {
 		return fmt.Errorf("data migration: %w", err)
 	}
@@ -175,6 +179,50 @@ func ensureRequestLogsInboundProtocol(db *sql.DB) error {
 	_, err = db.Exec(`ALTER TABLE request_logs ADD COLUMN inbound_protocol TEXT NOT NULL DEFAULT ''`)
 	if err != nil {
 		return fmt.Errorf("alter table add column: %w", err)
+	}
+	return nil
+}
+
+// ensureRequestLogsExtraColumns checks whether the http_status, request_body and
+// response_body columns exist on request_logs and adds any missing ones via
+// ALTER TABLE. This handles databases created before these columns were added to
+// the schema. The function is idempotent: existing columns are skipped.
+func ensureRequestLogsExtraColumns(db *sql.DB) error {
+	rows, err := db.Query(`PRAGMA table_info(request_logs)`)
+	if err != nil {
+		return fmt.Errorf("pragma table_info: %w", err)
+	}
+	defer rows.Close()
+
+	existing := make(map[string]bool)
+	for rows.Next() {
+		var cid int
+		var name, ctype string
+		var notnull int
+		var dflt sql.NullString
+		var pk int
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+			return fmt.Errorf("scan pragma row: %w", err)
+		}
+		existing[name] = true
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	cols := map[string]string{
+		"http_status":   "INTEGER",
+		"request_body":  "TEXT",
+		"response_body": "TEXT",
+	}
+	for name, ctype := range cols {
+		if existing[name] {
+			continue
+		}
+		stmt := fmt.Sprintf(`ALTER TABLE request_logs ADD COLUMN %s %s`, name, ctype)
+		if _, err := db.Exec(stmt); err != nil {
+			return fmt.Errorf("alter table add column %s: %w", name, err)
+		}
 	}
 	return nil
 }

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"time"
 
 	"github.com/lovelytoaster94/routerhub/internal/config"
 	"github.com/lovelytoaster94/routerhub/internal/server"
@@ -33,6 +34,10 @@ func main() {
 	if err := storage.Migrate(db); err != nil {
 		log.Fatalf("Failed to run migrations: %v", err)
 	}
+
+	// Start the background worker that periodically purges old request logs
+	// according to the log.request_log_retention_days setting (default 0 = off).
+	go storage.StartRetentionWorker(db, time.Hour)
 
 	// Build server
 	srv := server.New(db, cfg)

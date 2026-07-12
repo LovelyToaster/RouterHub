@@ -92,6 +92,9 @@ type RequestLog struct {
 	TotalTokens        int64   `json:"total_tokens"`
 	ClientIP           string  `json:"client_ip"`
 	GatewayAPIKeyName  string  `json:"gateway_api_key_name"`
+	HTTPStatus         *int64  `json:"http_status,omitempty"`
+	RequestBody        *string `json:"request_body,omitempty"`
+	ResponseBody       *string `json:"response_body,omitempty"`
 }
 
 // Helper functions for timestamps
