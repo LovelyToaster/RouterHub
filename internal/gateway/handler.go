@@ -98,13 +98,16 @@ func (h *GatewayHandler) handleProxy(w http.ResponseWriter, r *http.Request, inb
 	// leaving it stuck on "pending" until the next process restart.
 	defer FinalizeRequestLog(h.DB, logEntry)
 
+	// Body capture mode (controls whether request/response bodies are stored)
+	bodyCapture := storage.GetAppSettingString(h.DB, "log.body_capture", "error")
+
 	// Check protocol compatibility
 	if inboundProtocol != selected.Provider.Type {
 		// Cross-protocol conversion
-		ConvertedProxyRequest(w, r, selected, inboundProtocol, logEntry, stream)
+		ConvertedProxyRequest(w, r, selected, inboundProtocol, logEntry, stream, bodyCapture)
 	} else {
 		// Same protocol - proxy through
-		ProxyRequest(w, r, selected, inboundProtocol, logEntry, stream)
+		ProxyRequest(w, r, selected, inboundProtocol, logEntry, stream, bodyCapture)
 	}
 }
 

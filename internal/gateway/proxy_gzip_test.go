@@ -92,7 +92,7 @@ func TestProxyRequest_NonStreaming_GzippedUpstream(t *testing.T) {
 	rr := httptest.NewRecorder()
 	logEntry := &storage.RequestLog{RequestID: "test-req-1"}
 
-	ProxyRequest(rr, req, selected, protocol.ProtocolChatCompletions, logEntry, false)
+	ProxyRequest(rr, req, selected, protocol.ProtocolChatCompletions, logEntry, false, "error")
 
 	// Sanity: our upstream saw the gzip token (Go's transport still adds
 	// "gzip" itself when the caller didn't set Accept-Encoding), and returned
@@ -155,7 +155,7 @@ func TestProxyRequest_StripsClientAcceptEncoding(t *testing.T) {
 	req.Header.Set("Accept-Encoding", "gzip, deflate, br, zstd")
 
 	rr := httptest.NewRecorder()
-	ProxyRequest(rr, req, selected, protocol.ProtocolChatCompletions, &storage.RequestLog{RequestID: "test-req-2"}, false)
+	ProxyRequest(rr, req, selected, protocol.ProtocolChatCompletions, &storage.RequestLog{RequestID: "test-req-2"}, false, "error")
 
 	// The upstream should have received AT MOST one Accept-Encoding value,
 	// and that value must be whatever Go's transport chose (currently "gzip"),

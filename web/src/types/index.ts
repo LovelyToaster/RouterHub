@@ -64,6 +64,9 @@ export interface RequestLog {
   total_tokens: number
   client_ip: string
   gateway_api_key_name: string
+  http_status?: number
+  request_body?: string
+  response_body?: string
 }
 
 export interface WindowStats {

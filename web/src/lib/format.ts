@@ -45,3 +45,16 @@ export function formatMs(v: number): string {
   if (abs < 3_600_000) return `${fmt2(v / 60_000)}m`
   return `${fmt2(v / 3_600_000)}h`
 }
+
+/**
+ * prettyJson attempts to parse and re-serialize a JSON string with 2-space
+ * indentation. On failure (not valid JSON) it returns the original string.
+ */
+export function prettyJson(s: string | undefined | null): string {
+  if (!s) return ''
+  try {
+    return JSON.stringify(JSON.parse(s), null, 2)
+  } catch {
+    return s
+  }
+}

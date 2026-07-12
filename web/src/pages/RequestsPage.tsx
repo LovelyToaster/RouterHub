@@ -5,6 +5,7 @@ import { Search, ChevronLeft, ChevronRight } from 'lucide-react'
 import { GlassCard } from '@/components/ui/GlassCard'
 import { Badge } from '@/components/ui/Badge'
 import { Select } from '@/components/ui/Select'
+import RequestLogDetailModal from '@/components/RequestLogDetailModal'
 import { listRequestLogs } from '@/api/client'
 import { useUserTimezone } from '@/hooks/useUserTimezone'
 import { useRequestLogsStream } from '@/hooks/useRequestLogsStream'
@@ -50,6 +51,7 @@ export function RequestsPage() {
   const [pageSize, setPageSize] = useState<number>(20)
   const [offset, setOffset] = useState(0)
   const [search, setSearch] = useState('')
+  const [selectedLog, setSelectedLog] = useState<RequestLog | null>(null)
   const { tz } = useUserTimezone()
 
   const { data: logs, isLoading, refetch } = useQuery<RequestLog[]>({
@@ -183,7 +185,8 @@ export function RequestsPage() {
                   return (
                     <tr
                       key={log.id}
-                      className="border-b border-card-border hover:bg-card transition-colors"
+                      className="border-b border-card-border hover:bg-card transition-colors cursor-pointer"
+                      onClick={() => setSelectedLog(log)}
                     >
                       <td className="px-3 py-3 text-text-secondary">{formatTime(log.created_at)}</td>
                       <td className="px-3 py-3 text-text-muted">{log.id}</td>
@@ -264,6 +267,10 @@ export function RequestsPage() {
           )}
         </div>
       </GlassCard>
+
+      {selectedLog && (
+        <RequestLogDetailModal log={selectedLog} onClose={() => setSelectedLog(null)} />
+      )}
     </div>
   )
 }

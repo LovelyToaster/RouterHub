@@ -36,8 +36,9 @@ var sharedClient = &http.Client{Timeout: 5 * time.Minute}
 
 // ProxyRequest forwards the request to the provider and returns the response.
 // It handles header forwarding, auth header setting, and model replacement.
-// stream indicates whether the request is a streaming request.
-func ProxyRequest(w http.ResponseWriter, r *http.Request, selected *SelectedProvider, inboundProtocol string, logEntry *storage.RequestLog, stream bool) {
+// stream indicates whether the request is a streaming request. bodyCapture
+// controls whether the request/response bodies are stored in the log.
+func ProxyRequest(w http.ResponseWriter, r *http.Request, selected *SelectedProvider, inboundProtocol string, logEntry *storage.RequestLog, stream bool, bodyCapture string) {
 	startTime := time.Now()
 
 	// Build the target URL using base_url + endpoint path determined by provider type
@@ -104,6 +105,11 @@ func ProxyRequest(w http.ResponseWriter, r *http.Request, selected *SelectedProv
 	}
 	defer resp.Body.Close()
 
+	// Record the neutral HTTP status code for every upstream HTTP response
+	// (success or error); network/convert failures leave it nil.
+	code := int64(resp.StatusCode)
+	logEntry.HTTPStatus = &code
+
 	// Copy response headers, filtering hop-by-hop headers
 	for key, values := range resp.Header {
 		if hopByHopHeaders[key] {
@@ -125,7 +131,7 @@ func ProxyRequest(w http.ResponseWriter, r *http.Request, selected *SelectedProv
 	if stream {
 		// Streaming: forward chunks as they arrive, record first token time
 		// Also parse SSE events for usage information (side channel, best effort)
-		handleSameProtocolStream(w, resp, inboundProtocol, logEntry, startTime)
+		handleSameProtocolStream(w, resp, inboundProtocol, logEntry, startTime, modifiedBody, bodyCapture)
 	} else {
 		// Non-streaming: read full body
 		respBody, readErr := io.ReadAll(resp.Body)
@@ -142,11 +148,11 @@ func ProxyRequest(w http.ResponseWriter, r *http.Request, selected *SelectedProv
 
 		// Determine status based on response code
 		if resp.StatusCode >= 400 {
-			logEntry.Status = "error"
-			errMsg := fmt.Sprintf("upstream returned status %d: %s", resp.StatusCode, string(respBody))
-			logEntry.ErrorMessage = &errMsg
+			recordUpstreamError(logEntry, resp.StatusCode, respBody)
+			captureBodies(logEntry, bodyCapture, modifiedBody, respBody)
 		} else {
 			logEntry.Status = "success"
+			captureBodies(logEntry, bodyCapture, modifiedBody, respBody)
 		}
 
 		// Try to parse usage from response (best effort, non-streaming only)
@@ -162,13 +168,13 @@ func ProxyRequest(w http.ResponseWriter, r *http.Request, selected *SelectedProv
 // handleSameProtocolStream handles streaming for same-protocol passthrough.
 // It forwards SSE events as-is while parsing usage information as a side channel.
 // Note: headers and status code are already set by ProxyRequest before calling this function.
-func handleSameProtocolStream(w http.ResponseWriter, resp *http.Response, inboundProtocol string, logEntry *storage.RequestLog, startTime time.Time) {
+// reqBody is the actual request body sent upstream; bodyCapture controls body storage.
+func handleSameProtocolStream(w http.ResponseWriter, resp *http.Response, inboundProtocol string, logEntry *storage.RequestLog, startTime time.Time, reqBody []byte, bodyCapture string) {
 	if resp.StatusCode >= 400 {
 		body, _ := io.ReadAll(resp.Body)
 		_, _ = w.Write(body)
-		logEntry.Status = "error"
-		errMsg := fmt.Sprintf("upstream returned status %d: %s", resp.StatusCode, string(body))
-		logEntry.ErrorMessage = &errMsg
+		recordUpstreamError(logEntry, resp.StatusCode, body)
+		captureBodies(logEntry, bodyCapture, reqBody, body)
 		return
 	}
 
@@ -213,6 +219,7 @@ func handleSameProtocolStream(w http.ResponseWriter, resp *http.Response, inboun
 		logEntry.ErrorMessage = &errMsg
 	} else {
 		logEntry.Status = "success"
+		captureBodies(logEntry, bodyCapture, reqBody, nil)
 	}
 
 	// Record usage from stream if available
@@ -236,8 +243,8 @@ func handleSameProtocolStream(w http.ResponseWriter, resp *http.Response, inboun
 
 // ConvertedProxyRequest forwards a request with cross-protocol conversion.
 // It converts the request body, forwards to the provider, converts the response back,
-// and handles streaming conversion when applicable.
-func ConvertedProxyRequest(w http.ResponseWriter, r *http.Request, selected *SelectedProvider, inboundProtocol string, logEntry *storage.RequestLog, stream bool) {
+// and handles streaming conversion when applicable. bodyCapture controls body storage.
+func ConvertedProxyRequest(w http.ResponseWriter, r *http.Request, selected *SelectedProvider, inboundProtocol string, logEntry *storage.RequestLog, stream bool, bodyCapture string) {
 	startTime := time.Now()
 
 	// Build the target URL using base_url + endpoint path determined by provider type
@@ -310,13 +317,17 @@ func ConvertedProxyRequest(w http.ResponseWriter, r *http.Request, selected *Sel
 	}
 	defer resp.Body.Close()
 
+	// Record the neutral HTTP status code for every upstream HTTP response
+	// (success or error); network/convert failures leave it nil.
+	code := int64(resp.StatusCode)
+	logEntry.HTTPStatus = &code
+
 	// Intercept error responses before stream/non-stream dispatch so we can
 	// include the request body in the log for diagnosis.
 	if resp.StatusCode >= 400 {
 		bodyBytes, _ := io.ReadAll(resp.Body)
-		logEntry.Status = "error"
-		errMsg := fmt.Sprintf("upstream returned status %d for req [%s]: %s", resp.StatusCode, string(convertedBody), string(bodyBytes))
-		logEntry.ErrorMessage = &errMsg
+		recordUpstreamError(logEntry, resp.StatusCode, bodyBytes)
+		captureBodies(logEntry, bodyCapture, convertedBody, bodyBytes)
 		for key, values := range resp.Header {
 			if hopByHopHeaders[key] {
 				continue
@@ -335,7 +346,7 @@ func ConvertedProxyRequest(w http.ResponseWriter, r *http.Request, selected *Sel
 
 	if stream {
 		// Streaming: convert each SSE event
-		handleConvertedStream(w, resp, inboundProtocol, selected.Provider.Type, logEntry, startTime)
+		handleConvertedStream(w, resp, inboundProtocol, selected.Provider.Type, logEntry, startTime, convertedBody, bodyCapture)
 	} else {
 		// Non-streaming: read full body, convert response
 		respBody, readErr := io.ReadAll(resp.Body)
@@ -352,9 +363,8 @@ func ConvertedProxyRequest(w http.ResponseWriter, r *http.Request, selected *Sel
 		logEntry.TimeToFirstTokenMs = &durationMs
 
 		if resp.StatusCode >= 400 {
-			logEntry.Status = "error"
-			errMsg := fmt.Sprintf("upstream returned status %d: %s", resp.StatusCode, string(respBody))
-			logEntry.ErrorMessage = &errMsg
+			recordUpstreamError(logEntry, resp.StatusCode, respBody)
+			captureBodies(logEntry, bodyCapture, convertedBody, respBody)
 			// Return the original error response
 			for key, values := range resp.Header {
 				if hopByHopHeaders[key] {
@@ -380,6 +390,7 @@ func ConvertedProxyRequest(w http.ResponseWriter, r *http.Request, selected *Sel
 		}
 
 		logEntry.Status = "success"
+		captureBodies(logEntry, bodyCapture, convertedBody, respBody)
 
 		// Try to parse usage from original response (best effort)
 		parseUsageFromResponse(respBody, logEntry, selected.Provider.Type)
@@ -394,7 +405,7 @@ func ConvertedProxyRequest(w http.ResponseWriter, r *http.Request, selected *Sel
 // handleConvertedStream handles streaming response with cross-protocol conversion.
 // It uses a state machine (streamState) to generate proper SSE events with
 // lifecycle events, tool-call fragment accumulation, and stream termination.
-func handleConvertedStream(w http.ResponseWriter, resp *http.Response, inboundProtocol, providerType string, logEntry *storage.RequestLog, startTime time.Time) {
+func handleConvertedStream(w http.ResponseWriter, resp *http.Response, inboundProtocol, providerType string, logEntry *storage.RequestLog, startTime time.Time, reqBody []byte, bodyCapture string) {
 	if resp.StatusCode >= 400 {
 		// For error responses, copy original headers (filtering hop-by-hop)
 		// and forward the body as-is, preserving the original Content-Type.
@@ -409,9 +420,8 @@ func handleConvertedStream(w http.ResponseWriter, resp *http.Response, inboundPr
 		w.WriteHeader(resp.StatusCode)
 		body, _ := io.ReadAll(resp.Body)
 		_, _ = w.Write(body)
-		logEntry.Status = "error"
-		errMsg := fmt.Sprintf("upstream returned status %d: %s", resp.StatusCode, string(body))
-		logEntry.ErrorMessage = &errMsg
+		recordUpstreamError(logEntry, resp.StatusCode, body)
+		captureBodies(logEntry, bodyCapture, reqBody, body)
 		return
 	}
 
@@ -473,6 +483,7 @@ func handleConvertedStream(w http.ResponseWriter, resp *http.Response, inboundPr
 		logEntry.ErrorMessage = &errMsg
 	} else if logEntry.Status != "error" {
 		logEntry.Status = "success"
+		captureBodies(logEntry, bodyCapture, reqBody, nil)
 	}
 
 	// Persist final usage from state.lastUsage if available.
@@ -606,6 +617,65 @@ func setLogError(logEntry *storage.RequestLog, msg string) {
 	logEntry.Status = "error"
 	m := msg
 	logEntry.ErrorMessage = &m
+}
+
+// recordUpstreamError marks the log entry as an error and writes a human-readable
+// reason. When the upstream response body carries a descriptive error message
+// (e.g. OpenAI/Anthropic `error.message`), that is used as the reason so it is not
+// redundant with the separate HTTP status code; otherwise we fall back to a
+// generic "upstream returned status N" line.
+func recordUpstreamError(logEntry *storage.RequestLog, status int, respBody []byte) {
+	logEntry.Status = "error"
+	if msg := extractErrorMessage(respBody); msg != "" {
+		logEntry.ErrorMessage = &msg
+		return
+	}
+	reason := fmt.Sprintf("upstream returned status %d", status)
+	logEntry.ErrorMessage = &reason
+}
+
+// extractErrorMessage pulls a descriptive error message out of an upstream error
+// response body. It understands the OpenAI and Anthropic shapes
+// ({"error":{"message": "..."}}) as well as a top-level {"message": "..."}.
+// Returns "" when the body is not JSON or has no usable message.
+func extractErrorMessage(body []byte) string {
+	var data map[string]interface{}
+	if err := json.Unmarshal(body, &data); err != nil {
+		return ""
+	}
+	if e, ok := data["error"].(map[string]interface{}); ok {
+		if m, ok := e["message"].(string); ok && m != "" {
+			return m
+		}
+	}
+	if m, ok := data["message"].(string); ok && m != "" {
+		return m
+	}
+	return ""
+}
+
+// captureBodies stores the request/response bodies into the log entry per the
+// capture mode. mode: "all" stores both; "error" stores only on error status;
+// anything else (including "none"/empty) stores nothing.
+func captureBodies(logEntry *storage.RequestLog, mode string, reqBody, respBody []byte) {
+	switch mode {
+	case "all":
+		// store both
+	case "error":
+		if logEntry.Status != "error" {
+			return
+		}
+	default:
+		return
+	}
+	if len(reqBody) > 0 {
+		b := string(reqBody)
+		logEntry.RequestBody = &b
+	}
+	if len(respBody) > 0 {
+		b := string(respBody)
+		logEntry.ResponseBody = &b
+	}
 }
 
 // InsertPendingRequestLog persists a freshly-created log row in "pending"
