@@ -143,7 +143,7 @@ func ProxyRequest(w http.ResponseWriter, r *http.Request, selected *SelectedProv
 		// Determine status based on response code
 		if resp.StatusCode >= 400 {
 			logEntry.Status = "error"
-			errMsg := fmt.Sprintf("upstream returned status %d", resp.StatusCode)
+			errMsg := fmt.Sprintf("upstream returned status %d: %s", resp.StatusCode, string(respBody))
 			logEntry.ErrorMessage = &errMsg
 		} else {
 			logEntry.Status = "success"
@@ -167,7 +167,7 @@ func handleSameProtocolStream(w http.ResponseWriter, resp *http.Response, inboun
 		body, _ := io.ReadAll(resp.Body)
 		_, _ = w.Write(body)
 		logEntry.Status = "error"
-		errMsg := fmt.Sprintf("upstream returned status %d", resp.StatusCode)
+		errMsg := fmt.Sprintf("upstream returned status %d: %s", resp.StatusCode, string(body))
 		logEntry.ErrorMessage = &errMsg
 		return
 	}
@@ -333,7 +333,7 @@ func ConvertedProxyRequest(w http.ResponseWriter, r *http.Request, selected *Sel
 
 		if resp.StatusCode >= 400 {
 			logEntry.Status = "error"
-			errMsg := fmt.Sprintf("upstream returned status %d", resp.StatusCode)
+			errMsg := fmt.Sprintf("upstream returned status %d: %s", resp.StatusCode, string(respBody))
 			logEntry.ErrorMessage = &errMsg
 			// Return the original error response
 			for key, values := range resp.Header {

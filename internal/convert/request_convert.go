@@ -657,8 +657,13 @@ func convertAnthropicMessagesToChat(msgs []any) []any {
 		case "assistant":
 			chatContent, toolCalls, reasoningContent, reasoningSignature := convertAnthropicAssistantContentToChat(content)
 			entry := map[string]any{
-				"role":    "assistant",
-				"content": chatContent,
+				"role": "assistant",
+			}
+			if chatContent != "" {
+				entry["content"] = chatContent
+			} else if len(toolCalls) > 0 {
+				// content must be null (not "") when tool_calls is present with no text.
+				entry["content"] = nil
 			}
 			if len(toolCalls) > 0 {
 				entry["tool_calls"] = toolCalls
@@ -1164,8 +1169,13 @@ func convertResponsesInputToChat(input any) []any {
 			case "assistant":
 				chatContent, toolCalls, reasoningContent, reasoningSignature := convertResponsesAssistantContentToChat(content)
 				entry := map[string]any{
-					"role":    "assistant",
-					"content": chatContent,
+					"role": "assistant",
+				}
+				if chatContent != "" {
+					entry["content"] = chatContent
+				} else if len(toolCalls) > 0 {
+					// content must be null (not "") when tool_calls is present with no text.
+					entry["content"] = nil
 				}
 				if len(toolCalls) > 0 {
 					entry["tool_calls"] = toolCalls
