@@ -2227,3 +2227,437 @@ func TestConvertRequest_AnthropicCacheControlToChat_Extended(t *testing.T) {
 		t.Errorf("expected _cache_control %v, got %v", want, cc)
 	}
 }
+
+// --- Function call output conversion tests ---
+
+func TestConvertResponsesToChat_FunctionCallOutput(t *testing.T) {
+	responsesReq := []byte(`{
+		"model": "gpt-4",
+		"input": [
+			{"role": "user", "content": [{"type": "input_text", "text": "Weather?"}]},
+			{"role": "assistant", "content": [
+				{"type": "function_call", "call_id": "call_123", "name": "get_weather", "arguments": "{\"loc\":\"NYC\"}"}
+			]},
+			{"type": "function_call_output", "call_id": "call_123", "output": "Sunny, 72F"}
+		]
+	}`)
+
+	result, err := ConvertRequest(responsesReq, "openai-responses", "openai-chat-completions")
+	if err != nil {
+		t.Fatalf("ConvertRequest failed: %v", err)
+	}
+
+	var out map[string]any
+	if err := json.Unmarshal(result, &out); err != nil {
+		t.Fatalf("invalid result JSON: %v", err)
+	}
+
+	msgs := getSlice(out, "messages")
+	if len(msgs) != 3 {
+		t.Fatalf("expected 3 messages, got %d", len(msgs))
+	}
+
+	// First message: user
+	msg0 := msgs[0].(map[string]any)
+	if getString(msg0, "role") != "user" {
+		t.Errorf("expected msg[0] role 'user', got '%s'", getString(msg0, "role"))
+	}
+
+	// Second message: assistant with tool_calls
+	msg1 := msgs[1].(map[string]any)
+	if getString(msg1, "role") != "assistant" {
+		t.Errorf("expected msg[1] role 'assistant', got '%s'", getString(msg1, "role"))
+	}
+	toolCalls := getSlice(msg1, "tool_calls")
+	if len(toolCalls) != 1 {
+		t.Fatalf("expected 1 tool_call, got %d", len(toolCalls))
+	}
+
+	// Third message: tool (from function_call_output)
+	msg2 := msgs[2].(map[string]any)
+	if getString(msg2, "role") != "tool" {
+		t.Errorf("expected msg[2] role 'tool', got '%s'", getString(msg2, "role"))
+	}
+	if getString(msg2, "tool_call_id") != "call_123" {
+		t.Errorf("expected msg[2] tool_call_id 'call_123', got '%s'", getString(msg2, "tool_call_id"))
+	}
+	if getString(msg2, "content") != "Sunny, 72F" {
+		t.Errorf("expected msg[2] content 'Sunny, 72F', got '%s'", getString(msg2, "content"))
+	}
+}
+
+func TestConvertResponsesToChat_FunctionCallOutputInUserContent(t *testing.T) {
+	responsesReq := []byte(`{
+		"model": "gpt-4",
+		"input": [
+			{"role": "user", "content": [
+				{"type": "input_text", "text": "What is the result?"},
+				{"type": "function_call_output", "call_id": "call_456", "output": "42"}
+			]},
+			{"role": "assistant", "content": [{"type": "input_text", "text": "The answer is 42"}]}
+		]
+	}`)
+
+	result, err := ConvertRequest(responsesReq, "openai-responses", "openai-chat-completions")
+	if err != nil {
+		t.Fatalf("ConvertRequest failed: %v", err)
+	}
+
+	var out map[string]any
+	if err := json.Unmarshal(result, &out); err != nil {
+		t.Fatalf("invalid result JSON: %v", err)
+	}
+
+	msgs := getSlice(out, "messages")
+	// Should have: user (remaining parts), tool (function_call_output), assistant
+	if len(msgs) != 3 {
+		t.Fatalf("expected 3 messages, got %d", len(msgs))
+	}
+
+	// First message: user with text only (function_call_output separated out)
+	msg0 := msgs[0].(map[string]any)
+	if getString(msg0, "role") != "user" {
+		t.Errorf("expected msg[0] role 'user', got '%s'", getString(msg0, "role"))
+	}
+	if getString(msg0, "content") != "What is the result?" {
+		t.Errorf("expected msg[0] content 'What is the result?', got '%s'", getString(msg0, "content"))
+	}
+
+	// Second message: tool (from function_call_output, appended after user message)
+	msg1 := msgs[1].(map[string]any)
+	if getString(msg1, "role") != "tool" {
+		t.Errorf("expected msg[1] role 'tool', got '%s'", getString(msg1, "role"))
+	}
+	if getString(msg1, "tool_call_id") != "call_456" {
+		t.Errorf("expected msg[1] tool_call_id 'call_456', got '%s'", getString(msg1, "tool_call_id"))
+	}
+	if getString(msg1, "content") != "42" {
+		t.Errorf("expected msg[1] content '42', got '%s'", getString(msg1, "content"))
+	}
+
+	// Third message: assistant
+	msg2 := msgs[2].(map[string]any)
+	if getString(msg2, "role") != "assistant" {
+		t.Errorf("expected msg[2] role 'assistant', got '%s'", getString(msg2, "role"))
+	}
+}
+
+func TestConvertResponsesToAnthropic_FunctionCallOutput(t *testing.T) {
+	responsesReq := []byte(`{
+		"model": "gpt-4",
+		"input": [
+			{"role": "user", "content": [{"type": "input_text", "text": "Weather?"}]},
+			{"role": "assistant", "content": [
+				{"type": "function_call", "call_id": "call_123", "name": "get_weather", "arguments": "{\"loc\":\"NYC\"}"}
+			]},
+			{"type": "function_call_output", "call_id": "call_123", "output": "Sunny, 72F"}
+		]
+	}`)
+
+	result, err := ConvertRequest(responsesReq, "openai-responses", "anthropic-messages")
+	if err != nil {
+		t.Fatalf("ConvertRequest failed: %v", err)
+	}
+
+	var out map[string]any
+	if err := json.Unmarshal(result, &out); err != nil {
+		t.Fatalf("invalid result JSON: %v", err)
+	}
+
+	msgs := getSlice(out, "messages")
+	// Should have: user, assistant, user (with tool_result)
+	if len(msgs) != 3 {
+		t.Fatalf("expected 3 messages, got %d", len(msgs))
+	}
+
+	// Third message: user with tool_result content (from function_call_output)
+	msg2 := msgs[2].(map[string]any)
+	if getString(msg2, "role") != "user" {
+		t.Errorf("expected msg[2] role 'user', got '%s'", getString(msg2, "role"))
+	}
+	content := getSlice(msg2, "content")
+	if len(content) != 1 {
+		t.Fatalf("expected msg[2].content to have 1 item, got %d", len(content))
+	}
+	block := content[0].(map[string]any)
+	if getString(block, "type") != "tool_result" {
+		t.Errorf("expected content[0].type 'tool_result', got '%s'", getString(block, "type"))
+	}
+	if getString(block, "tool_use_id") != "call_123" {
+		t.Errorf("expected tool_use_id 'call_123', got '%s'", getString(block, "tool_use_id"))
+	}
+	if getString(block, "content") != "Sunny, 72F" {
+		t.Errorf("expected content 'Sunny, 72F', got '%s'", getString(block, "content"))
+	}
+}
+
+func TestConvertResponsesToChat_FunctionCallOutput_NonStringOutput(t *testing.T) {
+	responsesReq := []byte(`{
+		"model": "gpt-4",
+		"input": [
+			{"role": "user", "content": [{"type": "input_text", "text": "Get temp"}]},
+			{"role": "assistant", "content": [
+				{"type": "function_call", "call_id": "call_001", "name": "get_temperature", "arguments": "{}"}
+			]},
+			{"type": "function_call_output", "call_id": "call_001", "output": {"temperature": 72}}
+		]
+	}`)
+
+	result, err := ConvertRequest(responsesReq, "openai-responses", "openai-chat-completions")
+	if err != nil {
+		t.Fatalf("ConvertRequest failed: %v", err)
+	}
+
+	var out map[string]any
+	if err := json.Unmarshal(result, &out); err != nil {
+		t.Fatalf("invalid result JSON: %v", err)
+	}
+
+	msgs := getSlice(out, "messages")
+	if len(msgs) != 3 {
+		t.Fatalf("expected 3 messages, got %d", len(msgs))
+	}
+
+	// Third message: tool with JSON-serialized output
+	msg2 := msgs[2].(map[string]any)
+	if getString(msg2, "role") != "tool" {
+		t.Errorf("expected msg[2] role 'tool', got '%s'", getString(msg2, "role"))
+	}
+	if getString(msg2, "tool_call_id") != "call_001" {
+		t.Errorf("expected msg[2] tool_call_id 'call_001', got '%s'", getString(msg2, "tool_call_id"))
+	}
+	expectedOutput := `{"temperature":72}`
+	if getString(msg2, "content") != expectedOutput {
+		t.Errorf("expected msg[2] content '%s', got '%s'", expectedOutput, getString(msg2, "content"))
+	}
+}
+
+func TestConvertResponsesToChat_FunctionCallOutput_MultipleInUserContent(t *testing.T) {
+	responsesReq := []byte(`{
+		"model": "gpt-4",
+		"input": [
+			{"role": "user", "content": [
+				{"type": "input_text", "text": "Step 1 complete"},
+				{"type": "function_call_output", "call_id": "call_001", "output": "result_1"},
+				{"type": "function_call_output", "call_id": "call_002", "output": "result_2"}
+			]},
+			{"role": "assistant", "content": [{"type": "input_text", "text": "OK"}]}
+		]
+	}`)
+
+	result, err := ConvertRequest(responsesReq, "openai-responses", "openai-chat-completions")
+	if err != nil {
+		t.Fatalf("ConvertRequest failed: %v", err)
+	}
+
+	var out map[string]any
+	if err := json.Unmarshal(result, &out); err != nil {
+		t.Fatalf("invalid result JSON: %v", err)
+	}
+
+	msgs := getSlice(out, "messages")
+	// Expected: user, tool, tool, assistant
+	if len(msgs) != 4 {
+		t.Fatalf("expected 4 messages, got %d", len(msgs))
+	}
+
+	// First message: user with remaining text
+	msg0 := msgs[0].(map[string]any)
+	if getString(msg0, "role") != "user" {
+		t.Errorf("expected msg[0] role 'user', got '%s'", getString(msg0, "role"))
+	}
+	if getString(msg0, "content") != "Step 1 complete" {
+		t.Errorf("expected msg[0] content 'Step 1 complete', got '%s'", getString(msg0, "content"))
+	}
+
+	// Second message: tool (call_001)
+	msg1 := msgs[1].(map[string]any)
+	if getString(msg1, "role") != "tool" {
+		t.Errorf("expected msg[1] role 'tool', got '%s'", getString(msg1, "role"))
+	}
+	if getString(msg1, "tool_call_id") != "call_001" {
+		t.Errorf("expected msg[1] tool_call_id 'call_001', got '%s'", getString(msg1, "tool_call_id"))
+	}
+	if getString(msg1, "content") != "result_1" {
+		t.Errorf("expected msg[1] content 'result_1', got '%s'", getString(msg1, "content"))
+	}
+
+	// Third message: tool (call_002)
+	msg2 := msgs[2].(map[string]any)
+	if getString(msg2, "role") != "tool" {
+		t.Errorf("expected msg[2] role 'tool', got '%s'", getString(msg2, "role"))
+	}
+	if getString(msg2, "tool_call_id") != "call_002" {
+		t.Errorf("expected msg[2] tool_call_id 'call_002', got '%s'", getString(msg2, "tool_call_id"))
+	}
+	if getString(msg2, "content") != "result_2" {
+		t.Errorf("expected msg[2] content 'result_2', got '%s'", getString(msg2, "content"))
+	}
+
+	// Fourth message: assistant
+	msg3 := msgs[3].(map[string]any)
+	if getString(msg3, "role") != "assistant" {
+		t.Errorf("expected msg[3] role 'assistant', got '%s'", getString(msg3, "role"))
+	}
+}
+
+func TestConvertResponsesToChat_FunctionCallOutput_PureOutput(t *testing.T) {
+	// User message contains ONLY function_call_output, no other content parts.
+	responsesReq := []byte(`{
+		"model": "gpt-4",
+		"input": [
+			{"role": "user", "content": [
+				{"type": "function_call_output", "call_id": "call_001", "output": "42"}
+			]},
+			{"role": "assistant", "content": [{"type": "input_text", "text": "Thanks"}]}
+		]
+	}`)
+
+	result, err := ConvertRequest(responsesReq, "openai-responses", "openai-chat-completions")
+	if err != nil {
+		t.Fatalf("ConvertRequest failed: %v", err)
+	}
+
+	var out map[string]any
+	if err := json.Unmarshal(result, &out); err != nil {
+		t.Fatalf("invalid result JSON: %v", err)
+	}
+
+	msgs := getSlice(out, "messages")
+	// Expected: tool (no user message since there's no other content), assistant
+	if len(msgs) != 2 {
+		t.Fatalf("expected 2 messages (tool + assistant), got %d", len(msgs))
+	}
+
+	// First message: tool (no user message generated)
+	msg0 := msgs[0].(map[string]any)
+	if getString(msg0, "role") != "tool" {
+		t.Errorf("expected msg[0] role 'tool', got '%s'", getString(msg0, "role"))
+	}
+	if getString(msg0, "tool_call_id") != "call_001" {
+		t.Errorf("expected msg[0] tool_call_id 'call_001', got '%s'", getString(msg0, "tool_call_id"))
+	}
+	if getString(msg0, "content") != "42" {
+		t.Errorf("expected msg[0] content '42', got '%s'", getString(msg0, "content"))
+	}
+
+	// Second message: assistant
+	msg1 := msgs[1].(map[string]any)
+	if getString(msg1, "role") != "assistant" {
+		t.Errorf("expected msg[1] role 'assistant', got '%s'", getString(msg1, "role"))
+	}
+}
+
+func TestConvertResponsesToAnthropic_FunctionCallOutputInUserContent(t *testing.T) {
+	responsesReq := []byte(`{
+		"model": "gpt-4",
+		"input": [
+			{"role": "user", "content": [
+				{"type": "input_text", "text": "What is the result?"},
+				{"type": "function_call_output", "call_id": "call_456", "output": "42"}
+			]},
+			{"role": "assistant", "content": [
+				{"type": "function_call", "call_id": "call_456", "name": "get_answer", "arguments": "{}"}
+			]}
+		]
+	}`)
+
+	result, err := ConvertRequest(responsesReq, "openai-responses", "anthropic-messages")
+	if err != nil {
+		t.Fatalf("ConvertRequest failed: %v", err)
+	}
+
+	var out map[string]any
+	if err := json.Unmarshal(result, &out); err != nil {
+		t.Fatalf("invalid result JSON: %v", err)
+	}
+
+	msgs := getSlice(out, "messages")
+	// Expected: user (text), user (tool_result), assistant
+	if len(msgs) != 3 {
+		t.Fatalf("expected 3 messages, got %d", len(msgs))
+	}
+
+	// First message: user with text content
+	msg0 := msgs[0].(map[string]any)
+	if getString(msg0, "role") != "user" {
+		t.Errorf("expected msg[0] role 'user', got '%s'", getString(msg0, "role"))
+	}
+	content0 := getSlice(msg0, "content")
+	if len(content0) != 1 {
+		t.Fatalf("expected msg[0].content to have 1 item, got %d", len(content0))
+	}
+	block0 := content0[0].(map[string]any)
+	if getString(block0, "type") != "text" {
+		t.Errorf("expected content[0].type 'text', got '%s'", getString(block0, "type"))
+	}
+	if getString(block0, "text") != "What is the result?" {
+		t.Errorf("expected text 'What is the result?', got '%s'", getString(block0, "text"))
+	}
+
+	// Second message: user with tool_result (function_call_output extracted)
+	msg1 := msgs[1].(map[string]any)
+	if getString(msg1, "role") != "user" {
+		t.Errorf("expected msg[1] role 'user', got '%s'", getString(msg1, "role"))
+	}
+	content1 := getSlice(msg1, "content")
+	if len(content1) != 1 {
+		t.Fatalf("expected msg[1].content to have 1 item, got %d", len(content1))
+	}
+	block1 := content1[0].(map[string]any)
+	if getString(block1, "type") != "tool_result" {
+		t.Errorf("expected content[1].type 'tool_result', got '%s'", getString(block1, "type"))
+	}
+	if getString(block1, "tool_use_id") != "call_456" {
+		t.Errorf("expected tool_use_id 'call_456', got '%s'", getString(block1, "tool_use_id"))
+	}
+	if getString(block1, "content") != "42" {
+		t.Errorf("expected content '42', got '%s'", getString(block1, "content"))
+	}
+
+	// Third message: assistant with tool_use
+	msg2 := msgs[2].(map[string]any)
+	if getString(msg2, "role") != "assistant" {
+		t.Errorf("expected msg[2] role 'assistant', got '%s'", getString(msg2, "role"))
+	}
+}
+
+func TestConvertResponsesToChat_FunctionCallOutput_EmptyOutput(t *testing.T) {
+	responsesReq := []byte(`{
+		"model": "gpt-4",
+		"input": [
+			{"role": "user", "content": [{"type": "input_text", "text": "Hi"}]},
+			{"role": "assistant", "content": [
+				{"type": "function_call", "call_id": "call_001", "name": "do_something", "arguments": "{}"}
+			]},
+			{"type": "function_call_output", "call_id": "call_001", "output": ""}
+		]
+	}`)
+
+	result, err := ConvertRequest(responsesReq, "openai-responses", "openai-chat-completions")
+	if err != nil {
+		t.Fatalf("ConvertRequest failed: %v", err)
+	}
+
+	var out map[string]any
+	if err := json.Unmarshal(result, &out); err != nil {
+		t.Fatalf("invalid result JSON: %v", err)
+	}
+
+	msgs := getSlice(out, "messages")
+	if len(msgs) != 3 {
+		t.Fatalf("expected 3 messages, got %d", len(msgs))
+	}
+
+	// Third message: tool with empty content
+	msg2 := msgs[2].(map[string]any)
+	if getString(msg2, "role") != "tool" {
+		t.Errorf("expected msg[2] role 'tool', got '%s'", getString(msg2, "role"))
+	}
+	if getString(msg2, "tool_call_id") != "call_001" {
+		t.Errorf("expected msg[2] tool_call_id 'call_001', got '%s'", getString(msg2, "tool_call_id"))
+	}
+	if getString(msg2, "content") != "" {
+		t.Errorf("expected msg[2] content '', got '%s'", getString(msg2, "content"))
+	}
+}

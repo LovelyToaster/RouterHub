@@ -856,9 +856,8 @@ func convertAnthropicToResponses(req map[string]any) map[string]any {
 	// Messages
 	if msgs := getSlice(req, "messages"); len(msgs) > 0 {
 		out["input"] = convertAnthropicMessagesToResponsesInput(msgs)
-	} else if system != "" {
-		// system already set as instructions above, no need for fake user message
 	}
+	// If there are no messages but system is set, it's already captured as instructions above.
 
 	// Tools
 	if tools := getSlice(req, "tools"); len(tools) > 0 {
@@ -1111,13 +1110,57 @@ func convertResponsesInputToChat(input any) []any {
 			role := getString(itemMap, "role")
 			content := itemMap["content"]
 
+			// Handle top-level function_call_output items (no role field).
+			if itemType := getString(itemMap, "type"); itemType == "function_call_output" {
+				callID := getString(itemMap, "call_id")
+				output := extractOutput(itemMap)
+				msgs = append(msgs, map[string]any{
+					"role":         "tool",
+					"tool_call_id": callID,
+					"content":      output,
+				})
+				continue
+			}
+
 			switch role {
 			case "user":
-				chatContent := convertResponsesContentToChat(content)
-				msgs = append(msgs, map[string]any{
-					"role":    "user",
-					"content": chatContent,
-				})
+				// Separate function_call_output items from other content parts.
+				if contentArr, isArr := content.([]any); isArr {
+					var userParts []any
+					var toolMsgs []any
+					for _, part := range contentArr {
+						p, ok := part.(map[string]any)
+						if !ok {
+							userParts = append(userParts, part)
+							continue
+						}
+						if getString(p, "type") == "function_call_output" {
+							callID := getString(p, "call_id")
+							output := extractOutput(p)
+							toolMsgs = append(toolMsgs, map[string]any{
+								"role":         "tool",
+								"tool_call_id": callID,
+								"content":      output,
+							})
+						} else {
+							userParts = append(userParts, part)
+						}
+					}
+					if len(userParts) > 0 {
+						chatContent := convertResponsesContentToChat(userParts)
+						msgs = append(msgs, map[string]any{
+							"role":    "user",
+							"content": chatContent,
+						})
+					}
+					msgs = append(msgs, toolMsgs...)
+				} else {
+					chatContent := convertResponsesContentToChat(content)
+					msgs = append(msgs, map[string]any{
+						"role":    "user",
+						"content": chatContent,
+					})
+				}
 			case "assistant":
 				chatContent, toolCalls, reasoningContent, reasoningSignature := convertResponsesAssistantContentToChat(content)
 				entry := map[string]any{
@@ -1177,7 +1220,7 @@ func convertResponsesContentToChat(content any) any {
 					}
 				}
 			case "function_call_output":
-				textParts = append(textParts, getString(p, "output"))
+				// Handled at the caller level (extracted into separate tool messages).
 			}
 		}
 		if len(textParts) == 1 {
@@ -1340,13 +1383,67 @@ func convertResponsesInputToAnthropic(input any) []any {
 			role := getString(itemMap, "role")
 			content := itemMap["content"]
 
+			// Handle top-level function_call_output items (no role field).
+			if itemType := getString(itemMap, "type"); itemType == "function_call_output" {
+				callID := getString(itemMap, "call_id")
+				output := extractOutput(itemMap)
+				msgs = append(msgs, map[string]any{
+					"role": "user",
+					"content": []any{
+						map[string]any{
+							"type":        "tool_result",
+							"tool_use_id": callID,
+							"content":     output,
+						},
+					},
+				})
+				continue
+			}
+
 			switch role {
 			case "user":
-				anthropicContent := convertResponsesContentToAnthropic(content)
-				msgs = append(msgs, map[string]any{
-					"role":    "user",
-					"content": anthropicContent,
-				})
+				// Separate function_call_output items from other content parts.
+				if contentArr, isArr := content.([]any); isArr {
+					var userParts []any
+					var toolMsgs []any
+					for _, part := range contentArr {
+						p, ok := part.(map[string]any)
+						if !ok {
+							userParts = append(userParts, part)
+							continue
+						}
+						if getString(p, "type") == "function_call_output" {
+							callID := getString(p, "call_id")
+							output := extractOutput(p)
+							toolMsgs = append(toolMsgs, map[string]any{
+								"role": "user",
+								"content": []any{
+									map[string]any{
+										"type":        "tool_result",
+										"tool_use_id": callID,
+										"content":     output,
+									},
+								},
+							})
+						} else {
+							userParts = append(userParts, part)
+						}
+					}
+					if len(userParts) > 0 {
+						anthropicContent := convertResponsesContentToAnthropic(userParts)
+						msgs = append(msgs, map[string]any{
+							"role":    "user",
+							"content": anthropicContent,
+						})
+					}
+					msgs = append(msgs, toolMsgs...)
+				} else {
+					anthropicContent := convertResponsesContentToAnthropic(content)
+					msgs = append(msgs, map[string]any{
+						"role":    "user",
+						"content": anthropicContent,
+					})
+				}
 			case "assistant":
 				anthropicContent := convertResponsesAssistantContentToAnthropic(content)
 				msgs = append(msgs, map[string]any{
@@ -1422,10 +1519,7 @@ func convertResponsesContentToAnthropic(content any) []any {
 					}
 				}
 			case "function_call_output":
-				out = append(out, map[string]any{
-					"type": "text",
-					"text": getString(p, "output"),
-				})
+				// Handled at the caller level (extracted into separate tool_result messages).
 			}
 		}
 		return out
@@ -1565,6 +1659,22 @@ func restoreCacheControl(dst, src map[string]any) {
 	if cc, ok := src["_cache_control"]; ok {
 		dst["cache_control"] = cc
 	}
+}
+
+// extractOutput extracts the "output" field from a function_call_output item.
+// If output is not a string, it JSON-encodes the value.
+func extractOutput(item map[string]any) string {
+	output := getString(item, "output")
+	if output == "" {
+		if v, ok := item["output"]; ok && v != nil {
+			if _, isStr := v.(string); !isStr {
+				if b, err := json.Marshal(v); err == nil {
+					output = string(b)
+				}
+			}
+		}
+	}
+	return output
 }
 
 func extractImageURL(p map[string]any) string {
