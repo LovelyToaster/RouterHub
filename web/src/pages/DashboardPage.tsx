@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   Activity,
@@ -64,7 +64,7 @@ function Segmented<T extends string>({
             className={
               active
                 ? 'px-2.5 py-1 text-xs rounded-md bg-accent text-white transition-colors'
-                : 'px-2.5 py-1 text-xs rounded-md text-text-muted hover:text-text-primary transition-colors'
+                : 'px-2.5 py-1 text-xs rounded-md text-text-primary hover:text-text-primary transition-colors'
             }
           >
             {opt.label}
@@ -94,7 +94,7 @@ function Metric({
   const rowJustify = align === 'right' ? 'justify-end' : 'justify-start'
   return (
     <div className={`min-w-0 ${alignClass}`}>
-      <p className="text-xs text-text-secondary uppercase tracking-wide">{label}</p>
+      <p className="text-xs text-text-primary uppercase tracking-wide">{label}</p>
       <div className={`flex items-baseline gap-1.5 mt-1 ${rowJustify}`}>
         {Icon && <Icon className="w-5 h-5 shrink-0 self-center" style={valueColor ? { color: valueColor } : undefined} />}
         <p
@@ -112,22 +112,53 @@ function CardHeader({
   title,
   icon: Icon,
   color,
+  action,
 }: {
   title: string
   icon: any
   color: string
+  action?: ReactNode
 }) {
   return (
-    <div className="flex items-center justify-between mb-4">
-      <h3 className="text-base font-semibold text-text-primary">{title}</h3>
-      <div className="p-2 rounded-xl" style={{ backgroundColor: `${color}20` }}>
+    <div className="flex items-center justify-between mb-4 gap-3">
+      <div className="flex items-center gap-2 min-w-0">
+        <h3 className="text-base font-semibold text-text-primary truncate">{title}</h3>
+        {action}
+      </div>
+      <div className="p-2 rounded-xl shrink-0" style={{ backgroundColor: `${color}20` }}>
         <Icon className="w-5 h-5" style={{ color }} />
       </div>
     </div>
   )
 }
 
-// Build "副标"：全部模式显示日均，其它模式显示环比 Δ%。
+// CompareBadge renders a compact range-comparison pill meant to sit next to a
+// card title. Callers should omit it when comparison is not applicable
+// (e.g. range === 'all').
+function CompareBadge({
+  label,
+  value,
+  color,
+  icon: Icon,
+}: {
+  label: string
+  value: string
+  color?: string
+  icon?: any
+}) {
+  return (
+    <span className="inline-flex items-center gap-1 text-xs whitespace-nowrap">
+      <span className="text-text-primary">{label}</span>
+      <span
+        className="inline-flex items-center gap-0.5 font-semibold"
+        style={{ color: color || 'var(--color-text-primary)' }}
+      >
+        {Icon && <Icon className="w-3.5 h-3.5" />}
+        {value}
+      </span>
+    </span>
+  )
+}
 
 // deltaLabelForRange returns the i18n key used to label the range's delta metric.
 // Only meaningful when range is day/week/month (all is handled separately via daily average).
@@ -187,21 +218,11 @@ function sideMetric(
   }
 }
 
-// successCountMetric returns the "success/total" summary displayed in the
-// requests-overview card.
-function healthSideMetric(
-  stats: StatsSummary,
-  t: any,
-): { label: string; value: string } {
-  return {
-    label: t('dashboard.successCountLabel'),
-    value: `${formatCompact(stats.current.successful_requests)} / ${formatCompact(stats.current.requests)}`,
-  }
-}
-
 // RequestsOverviewCard merges the old Requests + Health cards into a single
 // wider card, laying out four metrics in a row on md+ (2×2 on small screens):
-//   [total requests] [Δ vs previous] [success rate] [success/total]
+//   [total requests] [success] [failure] [success rate]
+// The range-comparison (Δ vs previous window) is shown as a badge next to the
+// card title and is hidden when range === 'all'.
 function RequestsOverviewCard({ stats, t }: { stats: StatsSummary; t: any }) {
   const cur = stats.current.requests
   const prev = stats.previous.requests
@@ -210,27 +231,33 @@ function RequestsOverviewCard({ stats, t }: { stats: StatsSummary; t: any }) {
     stats.current.requests > 0
       ? stats.current.successful_requests / stats.current.requests
       : null
-  const successCount = healthSideMetric(stats, t)
+  const rangeLabel = t(`dashboard.range_${stats.range}`)
   return (
     <GlassCard className="p-5">
       <CardHeader
         title={t('dashboard.requestsOverviewCard')}
         icon={Activity}
         color="#6366f1"
+        action={
+          stats.range !== 'all' && side ? (
+            <CompareBadge label={side.label} value={side.value} color={side.color} icon={side.icon} />
+          ) : undefined
+        }
       />
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <Metric label={t(`dashboard.range_${stats.range}`)} value={formatCompact(cur)} />
+        <Metric label={rangeLabel} value={formatCompact(cur)} />
         <Metric
-          label={side ? side.label : t(deltaLabelForRange(stats.range))}
-          value={side ? side.value : '—'}
-          valueColor={side?.color}
-          icon={side?.icon}
+          label={t('dashboard.successInRange', { range: rangeLabel })}
+          value={formatCompact(stats.current.successful_requests)}
+        />
+        <Metric
+          label={t('dashboard.failureInRange', { range: rangeLabel })}
+          value={formatCompact(stats.current.failed_requests)}
         />
         <Metric
           label={t('dashboard.successRate')}
           value={successRate === null ? '—' : formatPercent(successRate)}
         />
-        <Metric label={successCount.label} value={successCount.value} />
       </div>
     </GlassCard>
   )
@@ -241,10 +268,20 @@ function TokensCard({ stats, t }: { stats: StatsSummary; t: any }) {
     stats.current.input_tokens > 0
       ? stats.current.cached_tokens / stats.current.input_tokens
       : 0
+  const tokenSide = sideMetric(stats, stats.current.tokens, stats.previous.tokens, t)
   return (
     <GlassCard className="p-5">
-      <CardHeader title={t('dashboard.tokensCard')} icon={Zap} color="#f59e0b" />
-      <div className="grid grid-cols-4 gap-4">
+      <CardHeader
+        title={t('dashboard.tokensCard')}
+        icon={Zap}
+        color="#f59e0b"
+        action={
+          stats.range !== 'all' && tokenSide ? (
+            <CompareBadge label={tokenSide.label} value={tokenSide.value} color={tokenSide.color} icon={tokenSide.icon} />
+          ) : undefined
+        }
+      />
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <Metric label={t('dashboard.inputTokens')} value={formatCompact(stats.current.input_tokens)} />
         <Metric label={t('dashboard.outputTokens')} value={formatCompact(stats.current.output_tokens)} />
         <Metric label={t('dashboard.cachedTokens')} value={formatCompact(stats.current.cached_tokens)} />
@@ -311,7 +348,7 @@ function DistributionCard({ stats, t }: { stats: StatsSummary; t: any }) {
       </div>
       <div className="h-72 overflow-y-auto pr-1">
         {data.length === 0 ? (
-          <div className="h-full flex items-center justify-center text-text-muted text-sm">
+          <div className="h-full flex items-center justify-center text-text-primary text-sm">
             {t('dashboard.noData')}
           </div>
         ) : (
@@ -320,11 +357,11 @@ function DistributionCard({ stats, t }: { stats: StatsSummary; t: any }) {
               const pct = totalAll > 0 ? (item.count / totalAll) * 100 : 0
               return (
                 <div key={item.name} className="flex items-center gap-3">
-                  <span className="text-xs text-text-muted w-5 tabular-nums">{i + 1}</span>
+                  <span className="text-xs text-text-primary w-5 tabular-nums">{i + 1}</span>
                   <div className="flex-1 min-w-0">
                     <div className="flex justify-between mb-1 gap-3">
-                      <span className="text-sm text-text-secondary truncate">{item.name}</span>
-                      <span className="text-sm text-text-muted tabular-nums whitespace-nowrap">
+                      <span className="text-sm text-text-primary truncate">{item.name}</span>
+                      <span className="text-sm text-text-primary tabular-nums whitespace-nowrap">
                         {formatCompact(item.count)}{' '}
                         <span className="text-xs">({fmt2(pct)}%)</span>
                       </span>
@@ -369,29 +406,29 @@ function PerformanceCard({ stats, t }: { stats: StatsSummary; t: any }) {
       </div>
       <div className="h-72">
         {items.length === 0 ? (
-          <div className="h-full flex items-center justify-center text-text-muted text-sm">
+          <div className="h-full flex items-center justify-center text-text-primary text-sm">
             {t('dashboard.noData')}
           </div>
         ) : (
           <ul className="space-y-3">
             {items.map((item, i) => (
               <li key={item.model} className="flex items-start gap-3">
-                <span className="text-xs text-text-muted w-5 mt-1 tabular-nums">{i + 1}</span>
+                <span className="text-xs text-text-primary w-5 mt-1 tabular-nums">{i + 1}</span>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-baseline justify-between gap-3">
                     <span className="text-sm text-text-primary truncate">{item.model}</span>
                     <span className="text-base font-semibold text-text-primary tabular-nums whitespace-nowrap">
                       {fmt2(item.tokens_per_second)}{' '}
-                      <span className="text-xs font-normal text-text-muted">
+                      <span className="text-xs font-normal text-text-primary">
                         {t('dashboard.tokensPerSec')}
                       </span>
                     </span>
                   </div>
                   <div className="flex items-baseline justify-between gap-3 mt-0.5">
-                    <span className="text-xs text-text-muted">
+                    <span className="text-xs text-text-primary">
                       {t('dashboard.ttft')} {formatMs(item.avg_ttft_ms)}
                     </span>
-                    <span className="text-xs text-text-muted tabular-nums">
+                    <span className="text-xs text-text-primary tabular-nums">
                       {formatCompact(item.sample_count)} {t('dashboard.samples')}
                     </span>
                   </div>
@@ -427,7 +464,7 @@ export function DashboardPage() {
     <div className="flex items-center justify-between gap-3 flex-wrap">
       <div>
         <h1 className="text-2xl font-bold text-text-primary">{t('dashboard.title')}</h1>
-        <p className="text-text-secondary mt-1">{t('dashboard.subtitle')}</p>
+        <p className="text-text-primary mt-1">{t('dashboard.subtitle')}</p>
       </div>
       <Segmented value={range} onChange={setRange} options={rangeOptions} />
     </div>
@@ -450,7 +487,7 @@ export function DashboardPage() {
           <GlassCard className="p-8 text-center max-w-md">
             <XCircle className="w-12 h-12 mx-auto mb-3 text-red-400" />
             <h2 className="text-lg font-semibold text-text-primary mb-2">{t('dashboard.loadError')}</h2>
-            <p className="text-text-secondary text-sm">
+            <p className="text-text-primary text-sm">
               {(error as any)?.message || t('dashboard.loadErrorDesc')}
             </p>
           </GlassCard>

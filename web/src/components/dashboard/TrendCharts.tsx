@@ -31,7 +31,6 @@ interface Palette {
   accent: string
   accentLight: string
   cardBorder: string
-  textMuted: string
   surfaceLight: string
   textPrimary: string
 }
@@ -67,7 +66,6 @@ const PALETTES = {
     accent: '#6366f1',
     accentLight: '#818cf8',
     cardBorder: 'rgba(255, 255, 255, 0.1)',
-    textMuted: '#64748b',
     surfaceLight: '#1a1a24',
     textPrimary: '#f1f5f9',
   },
@@ -75,7 +73,6 @@ const PALETTES = {
     accent: '#6366f1',
     accentLight: '#818cf8',
     cardBorder: 'rgba(0, 0, 0, 0.1)',
-    textMuted: '#94a3b8',
     surfaceLight: '#ffffff',
     textPrimary: '#1e293b',
   },
@@ -191,7 +188,7 @@ function TrendChartBase({ series, bucketKind, label, chartType }: TrendChartProp
     () => [
       {
         scale: 'x',
-        stroke: palette.textMuted,
+        stroke: palette.textPrimary,
         grid: { stroke: palette.cardBorder, width: 1 },
         ticks: { stroke: palette.cardBorder, width: 1 },
         // Constrain splits to integer bucket indices; sparsify to ~8 ticks max
@@ -212,13 +209,13 @@ function TrendChartBase({ series, bucketKind, label, chartType }: TrendChartProp
       },
       {
         scale: 'y',
-        stroke: palette.textMuted,
+        stroke: palette.textPrimary,
         grid: { stroke: palette.cardBorder, width: 1 },
         ticks: { stroke: palette.cardBorder, width: 1 },
         values: (_u, splits) => splits.map((v) => formatCompact(v)),
       },
     ],
-    [palette.textMuted, palette.cardBorder, tickFormatter],
+    [palette.textPrimary, palette.cardBorder, tickFormatter],
   )
 
   const options = useMemo<uPlot.Options>(
@@ -263,7 +260,7 @@ function TrendChartBase({ series, bucketKind, label, chartType }: TrendChartProp
   return (
     <div ref={containerRef} className="relative h-full w-full">
       {!hasAnyValue ? (
-        <div className="flex h-full w-full items-center justify-center text-text-muted text-sm">
+        <div className="flex h-full w-full items-center justify-center text-text-primary text-sm">
           {t('dashboard.noData')}
         </div>
       ) : (
@@ -274,7 +271,7 @@ function TrendChartBase({ series, bucketKind, label, chartType }: TrendChartProp
               className="pointer-events-none absolute z-10 rounded-xl border border-card-border bg-surface-light px-3 py-2 text-sm shadow-lg"
               style={{ left: tooltip.x, top: tooltip.y }}
             >
-              <div className="text-text-muted">{tooltip.label}</div>
+              <div className="text-text-primary">{tooltip.label}</div>
               <div className="font-medium text-text-primary">
                 {label}: {formatCompact(tooltip.value)}
               </div>
