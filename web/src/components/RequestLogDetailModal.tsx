@@ -109,9 +109,35 @@ export default function RequestLogDetailModal({
               value={log.http_status != null ? String(log.http_status) : undefined}
             />
             <MetaRow label={t('requests.reason')} value={log.error_message} />
-            <MetaRow label={t('requests.thModel')} value={log.requested_model} />
+            <MetaRow
+              label={t('requests.thModel')}
+              value={
+                log.actual_model && log.actual_model !== log.requested_model ? (
+                  <span>
+                    {log.requested_model}
+                    <span className="text-text-secondary"> → </span>
+                    {log.actual_model}
+                  </span>
+                ) : (
+                  log.requested_model
+                )
+              }
+            />
             <MetaRow label={t('requests.thProvider')} value={log.provider_name} />
-            <MetaRow label={t('requests.thApiFormat')} value={log.inbound_protocol} />
+            <MetaRow
+              label={t('requests.thApiFormat')}
+              value={
+                log.inbound_protocol && log.inbound_protocol !== log.provider_type ? (
+                  <span>
+                    {log.inbound_protocol}
+                    <span className="text-text-secondary"> → </span>
+                    {log.provider_type}
+                  </span>
+                ) : (
+                  log.inbound_protocol || log.provider_type
+                )
+              }
+            />
             <MetaRow label={t('requests.thClientIp')} value={log.client_ip} />
             <MetaRow label={t('requests.thApiKey')} value={log.gateway_api_key_name} />
             <MetaRow label={t('requests.thTime')} value={formatTime(log.created_at)} />
