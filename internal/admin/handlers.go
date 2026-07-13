@@ -21,7 +21,10 @@ import (
 )
 
 // AppVersion is the RouterHub build version reported to the UI.
-const AppVersion = "1.0.0"
+// It is injected at build time via -ldflags "-X ...admin.AppVersion=<version>"
+// read from web/package.json (the single source of truth). The default "dev"
+// is used when building without ldflags (e.g. `go test`, `go run`).
+var AppVersion = "dev"
 
 // BuildDate is injected via -ldflags "-X ...BuildDate=<RFC3339 UTC>".
 // When empty (e.g. `go run`), we fall back to the binary's mtime at startup.

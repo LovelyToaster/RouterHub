@@ -78,9 +78,10 @@ cd web; npm install; npm run build
 # 后端
 go build -o routerhub.exe ./cmd/routerhub
 
-# 注入构建日期（显示在设置页）
+# 注入版本号（取自 web/package.json，单一来源）与构建日期（显示在设置页）
+$version = (Get-Content -Raw web/package.json | ConvertFrom-Json).version
 $now = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
-go build -ldflags "-X github.com/lovelytoaster94/routerhub/internal/admin.BuildDate=$now" -o routerhub.exe ./cmd/routerhub
+go build -ldflags "-X github.com/lovelytoaster94/routerhub/internal/admin.AppVersion=$version -X github.com/lovelytoaster94/routerhub/internal/admin.BuildDate=$now" -o routerhub.exe ./cmd/routerhub
 
 # 测试
 go test ./...

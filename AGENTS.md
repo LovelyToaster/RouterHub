@@ -40,9 +40,10 @@ powershell -File scripts\build.ps1
 cd web; npm install; npm run build; cd ..
 go build -o routerhub.exe ./cmd/routerhub
 
-# 注入 BuildDate（RFC3339 UTC）
+# 注入版本号（取自 web/package.json，单一来源）与 BuildDate（RFC3339 UTC）
+$version = (Get-Content -Raw web/package.json | ConvertFrom-Json).version
 $now = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
-go build -ldflags "-X github.com/lovelytoaster94/routerhub/internal/admin.BuildDate=$now" -o routerhub.exe ./cmd/routerhub
+go build -ldflags "-X github.com/lovelytoaster94/routerhub/internal/admin.AppVersion=$version -X github.com/lovelytoaster94/routerhub/internal/admin.BuildDate=$now" -o routerhub.exe ./cmd/routerhub
 
 # 测试
 go test ./...

@@ -32,7 +32,7 @@ jobs:
         id: meta
         run: |
           echo "build_date=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_OUTPUT"
-          echo "version=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          echo "version=$(jq -r .version web/package.json)" >> "$GITHUB_OUTPUT"
 
       - name: Docker tags
         id: tags
@@ -69,6 +69,7 @@ jobs:
           labels: ${{ steps.tags.outputs.labels }}
           build-args: |
             BUILD_DATE=${{ steps.meta.outputs.build_date }}
+            VERSION=${{ steps.meta.outputs.version }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 

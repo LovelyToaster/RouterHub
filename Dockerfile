@@ -19,8 +19,13 @@ COPY . .
 RUN rm -rf internal/webui/dist && mkdir -p internal/webui/dist
 COPY --from=web /web/dist/ internal/webui/dist/
 ARG BUILD_DATE=""
-RUN go build -trimpath \
-      -ldflags "-s -w -X github.com/lovelytoaster94/routerhub/internal/admin.BuildDate=${BUILD_DATE}" \
+ARG VERSION=""
+# VERSION defaults to the version declared in web/package.json (single source of truth).
+RUN if [ -z "$VERSION" ]; then \
+      VERSION=$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' web/package.json | head -n1); \
+    fi; \
+    go build -trimpath \
+      -ldflags "-s -w -X github.com/lovelytoaster94/routerhub/internal/admin.AppVersion=${VERSION} -X github.com/lovelytoaster94/routerhub/internal/admin.BuildDate=${BUILD_DATE}" \
       -o /out/routerhub ./cmd/routerhub
 
 # ---- Stage 3: runtime ----

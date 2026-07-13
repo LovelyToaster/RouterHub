@@ -23,9 +23,16 @@ Copy-Item -Recurse -Force "$rootDir\web\dist\*" -Destination $embedDist
 New-Item -ItemType File -Force -Path "$embedDist\.gitkeep" | Out-Null
 
 Write-Host "=== Step 3: Building Go binary ===" -ForegroundColor Cyan
+# Read the product version from web/package.json (single source of truth).
+$pkg = Get-Content -Raw -Path "$rootDir\web\package.json" | ConvertFrom-Json
+$appVersion = $pkg.version
+# Inject version + build date via ldflags (mirrors AGENTS.md build instructions).
+$now = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+$ldflags = "-X github.com/lovelytoaster94/routerhub/internal/admin.AppVersion=$appVersion " +
+           "-X github.com/lovelytoaster94/routerhub/internal/admin.BuildDate=$now"
 Push-Location $rootDir
 try {
-    go build -o routerhub.exe ./cmd/routerhub
+    go build -ldflags $ldflags -o routerhub.exe ./cmd/routerhub
     if ($LASTEXITCODE -ne 0) { throw "Go build failed" }
 } finally {
     Pop-Location
