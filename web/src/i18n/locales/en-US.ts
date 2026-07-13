@@ -52,6 +52,8 @@ const enUS = {
       requestLogRetentionDescription:
         'Logs older than this are auto-deleted; 0 disables deletion',
       never: 'Never',
+      saved: 'Settings saved',
+      saveFailed: 'Save failed',
     },
     appearance: {
       language: 'Language',

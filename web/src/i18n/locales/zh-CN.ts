@@ -50,6 +50,8 @@ const zhCN = {
       requestLogRetention: '请求日志保留天数',
       requestLogRetentionDescription: '超过该天数的请求日志将被自动删除；设为 0 则不删除',
       never: '从不',
+      saved: '设置已保存',
+      saveFailed: '保存失败',
     },
     appearance: {
       language: '语言',

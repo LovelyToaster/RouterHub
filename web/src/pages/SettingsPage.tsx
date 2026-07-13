@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next'
 
 import { Palette, Info, Clock } from 'lucide-react'
 import { GlassCard, GlassCardHeader } from '@/components/ui/GlassCard'
+import { Toast } from '@/components/ui/Toast'
 import { Input } from '@/components/ui/Input'
 import { Select } from '@/components/ui/Select'
 import { AppearanceControls } from '@/components/AppearanceControls'
@@ -22,6 +23,7 @@ export function SettingsPage() {
   const [activeTab, setActiveTab] = useState<'general' | 'logs'>('general')
   const [bodyCapture, setBodyCapture] = useState<string>('error')
   const [retentionDays, setRetentionDays] = useState<string>('0')
+  const [toast, setToast] = useState<{ type: 'success' | 'error'; msg: string } | null>(null)
 
   const { data: settings, isLoading } = useQuery({
     queryKey: ['settings'],
@@ -67,6 +69,10 @@ export function SettingsPage() {
     mutationFn: (data: Record<string, string>) => updateSettings(data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['settings'] })
+      setToast({ type: 'success', msg: t('settings.saved') })
+    },
+    onError: (err: Error) => {
+      setToast({ type: 'error', msg: err.message || t('settings.saveFailed') })
     },
   })
 
@@ -74,6 +80,10 @@ export function SettingsPage() {
     mutationFn: (tz: string) => updateMe({ timezone: tz }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['me'] })
+      setToast({ type: 'success', msg: t('settings.saved') })
+    },
+    onError: (err: Error) => {
+      setToast({ type: 'error', msg: err.message || t('settings.saveFailed') })
     },
   })
 
@@ -271,6 +281,9 @@ export function SettingsPage() {
             </>
           )}
         </>
+      )}
+      {toast && (
+        <Toast type={toast.type} message={toast.msg} onClose={() => setToast(null)} />
       )}
     </div>
   )
