@@ -753,5 +753,8 @@ func FinalizeRequestLog(db *sql.DB, logEntry *storage.RequestLog) {
 		fmt.Printf("Failed to finalize request log: %v\n", err)
 		return
 	}
+	if err := storage.UpsertStatsCounters(db, logEntry); err != nil {
+		fmt.Printf("Failed to upsert stats counters: %v\n", err)
+	}
 	events.Global.Publish()
 }
