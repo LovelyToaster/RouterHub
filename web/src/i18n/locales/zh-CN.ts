@@ -8,6 +8,9 @@ const zhCN = {
       noResults: '无匹配结果',
       searchPlaceholder: '搜索...',
       clear: '清空',
+      cancel: '取消',
+      confirm: '确认',
+      delete: '删除',
     },
     nav: {
       dashboard: '仪表盘',

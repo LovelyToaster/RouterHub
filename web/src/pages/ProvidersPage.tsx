@@ -16,6 +16,7 @@ import {
   Search,
 } from 'lucide-react'
 import { Modal } from '@/components/ui/Modal'
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { GlassCard } from '@/components/ui/GlassCard'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
@@ -85,6 +86,7 @@ function ProviderFormModal({
   const [tempModels, setTempModels] = useState<TempModel[]>([])
   const [newModelName, setNewModelName] = useState('')
   const [showFetchModal, setShowFetchModal] = useState(false)
+  const [deleteModelConfirmId, setDeleteModelConfirmId] = useState<string | null>(null)
 
   // For edit: load existing models
   const { data: existingModels = [], isLoading: modelsLoading } = useQuery({
@@ -176,6 +178,7 @@ function ProviderFormModal({
     mutationFn: (modelId: string) => deleteProviderModel(provider!.id, modelId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['provider-models', provider!.id] })
+      setDeleteModelConfirmId(null)
     },
     onError: (err: any) => setError(err.message),
   })
@@ -357,8 +360,9 @@ function ProviderFormModal({
                             type="button"
                             onClick={() => {
                               if (isPersisted) {
-                                deleteModelMut.mutate(pm.id)
+                                setDeleteModelConfirmId(pm.id)
                               } else {
+                                // Temp models are local-only, no confirmation needed
                                 handleDeleteTempModel(tm.id)
                               }
                             }}
@@ -407,6 +411,19 @@ function ProviderFormModal({
           existingModels={isEditing ? existingModels : tempModels}
           onImport={handleImportTempModels}
           onClose={() => setShowFetchModal(false)}
+        />
+      )}
+
+      {deleteModelConfirmId && (
+        <ConfirmDialog
+          title={t('providers.deleteModel')}
+          message={t('providers.deleteModelConfirm')}
+          danger
+          loading={deleteModelMut.isPending}
+          onConfirm={() => {
+            deleteModelMut.mutate(deleteModelConfirmId)
+          }}
+          onCancel={() => setDeleteModelConfirmId(null)}
         />
       )}
     </Modal>
@@ -677,6 +694,7 @@ function ModelAliasModal({
   const [aliasTarget, setAliasTarget] = useState('')
   const [aliasEnabled, setAliasEnabled] = useState(true)
   const [aliasError, setAliasError] = useState('')
+  const [deleteAliasConfirmId, setDeleteAliasConfirmId] = useState<string | null>(null)
 
   const updatePrefixMut = useMutation({
     mutationFn: () =>
@@ -724,6 +742,7 @@ function ModelAliasModal({
     mutationFn: (id: string) => deleteModelAlias(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['provider-model-aliases', provider.id] })
+      setDeleteAliasConfirmId(null)
     },
   })
 
@@ -836,18 +855,13 @@ function ModelAliasModal({
                     <label className="block text-sm font-medium text-text-secondary">
                       {t('providers.targetModel')}
                     </label>
-                    <input
-                      list="alias-target-model-list"
-                      className="w-full rounded-xl border border-surface-border bg-surface-light px-4 py-2.5 text-sm text-text-primary placeholder:text-text-muted transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-accent/50 focus:border-accent hover:border-accent/30"
+                    <Select
+                      searchable
                       placeholder={t('providers.selectProviderModel')}
+                      options={providerModels.map((pm) => ({ value: pm.model_name, label: pm.model_name }))}
                       value={aliasTarget}
                       onChange={(e) => setAliasTarget(e.target.value)}
                     />
-                    <datalist id="alias-target-model-list">
-                      {providerModels.map((pm) => (
-                        <option key={pm.id} value={pm.model_name} />
-                      ))}
-                    </datalist>
                   </div>
                   <div className="flex items-center gap-3">
                     <Toggle
@@ -923,11 +937,7 @@ function ModelAliasModal({
                         </button>
                         <button
                           type="button"
-                          onClick={() => {
-                            if (confirm(t('providers.deleteAliasConfirm'))) {
-                              deleteAliasMut.mutate(alias.id)
-                            }
-                          }}
+                          onClick={() => setDeleteAliasConfirmId(alias.id)}
                           className="p-1.5 rounded-lg text-text-muted hover:text-red-600 dark:hover:text-red-300 hover:bg-red-500/10 transition-colors"
                         >
                           <Trash2 className="w-4 h-4" />
@@ -938,6 +948,19 @@ function ModelAliasModal({
                 </div>
               )}
       </div>
+
+      {deleteAliasConfirmId && (
+        <ConfirmDialog
+          title={t('providers.deleteAliasConfirm')}
+          message={t('providers.deleteAliasConfirm')}
+          danger
+          loading={deleteAliasMut.isPending}
+          onConfirm={() => {
+            deleteAliasMut.mutate(deleteAliasConfirmId)
+          }}
+          onCancel={() => setDeleteAliasConfirmId(null)}
+        />
+      )}
     </Modal>
   )
 }
@@ -1016,6 +1039,7 @@ export function ProvidersPage() {
   const [showModal, setShowModal] = useState(false)
   const [editingProvider, setEditingProvider] = useState<Provider | undefined>()
   const [aliasModalProvider, setAliasModalProvider] = useState<Provider | undefined>()
+  const [deleteProviderConfirm, setDeleteProviderConfirm] = useState<Provider | null>(null)
   const queryClient = useQueryClient()
 
   const { data: providers, isLoading } = useQuery({
@@ -1027,6 +1051,7 @@ export function ProvidersPage() {
     mutationFn: (id: string) => deleteProvider(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['providers'] })
+      setDeleteProviderConfirm(null)
     },
   })
 
@@ -1041,9 +1066,7 @@ export function ProvidersPage() {
   }
 
   const handleDelete = (provider: Provider) => {
-    if (confirm(t('providers.deleteConfirm'))) {
-      deleteMut.mutate(provider.id)
-    }
+    setDeleteProviderConfirm(provider)
   }
 
   return (
@@ -1143,6 +1166,19 @@ export function ProvidersPage() {
         <ModelAliasModal
           provider={aliasModalProvider}
           onClose={() => setAliasModalProvider(undefined)}
+        />
+      )}
+
+      {deleteProviderConfirm && (
+        <ConfirmDialog
+          title={t('providers.deleteConfirm')}
+          message={t('providers.deleteConfirm')}
+          danger
+          loading={deleteMut.isPending}
+          onConfirm={() => {
+            deleteMut.mutate(deleteProviderConfirm.id)
+          }}
+          onCancel={() => setDeleteProviderConfirm(null)}
         />
       )}
     </div>

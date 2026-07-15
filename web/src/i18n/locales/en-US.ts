@@ -8,6 +8,9 @@ const enUS = {
       noResults: 'No matches',
       searchPlaceholder: 'Search...',
       clear: 'Clear',
+      cancel: 'Cancel',
+      confirm: 'Confirm',
+      delete: 'Delete',
     },
     nav: {
       dashboard: 'Dashboard',

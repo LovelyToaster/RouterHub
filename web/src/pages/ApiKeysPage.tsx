@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next'
 
 import { Plus, Pencil, Trash2, Eye, EyeOff, Key, Copy } from 'lucide-react'
 import { Modal } from '@/components/ui/Modal'
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { GlassCard } from '@/components/ui/GlassCard'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
@@ -169,6 +170,7 @@ export function ApiKeysPage() {
   const [editingKey, setEditingKey] = useState<GatewayAPIKey | undefined>()
   const [visibleKeys, setVisibleKeys] = useState<Set<string>>(new Set())
   const [copiedId, setCopiedId] = useState<string | null>(null)
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null)
   const queryClient = useQueryClient()
 
   const { data: keys, isLoading } = useQuery({
@@ -180,6 +182,7 @@ export function ApiKeysPage() {
     mutationFn: (id: string) => deleteGatewayKey(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['gateway-keys'] })
+      setDeleteConfirmId(null)
     },
   })
 
@@ -281,11 +284,7 @@ export function ApiKeysPage() {
                         <Pencil className="w-4 h-4" />
                       </button>
                       <button
-                        onClick={() => {
-                          if (confirm(t('apiKeys.deleteConfirm'))) {
-                            deleteMut.mutate(keyItem.id)
-                          }
-                        }}
+                        onClick={() => setDeleteConfirmId(keyItem.id)}
                         className="p-1.5 rounded-lg text-text-muted hover:text-red-600 dark:hover:text-red-300 hover:bg-red-500/10 transition-colors"
                       >
                         <Trash2 className="w-4 h-4" />
@@ -308,6 +307,18 @@ export function ApiKeysPage() {
       {showCreate && <CreateKeyModal onClose={() => setShowCreate(false)} />}
       {editingKey && (
         <EditKeyModal keyItem={editingKey} onClose={() => setEditingKey(undefined)} />
+      )}
+      {deleteConfirmId && (
+        <ConfirmDialog
+          title={t('apiKeys.deleteConfirm')}
+          message={t('apiKeys.deleteConfirm')}
+          danger
+          loading={deleteMut.isPending}
+          onConfirm={() => {
+            deleteMut.mutate(deleteConfirmId)
+          }}
+          onCancel={() => setDeleteConfirmId(null)}
+        />
       )}
     </div>
   )
