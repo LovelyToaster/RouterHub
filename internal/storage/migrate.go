@@ -101,6 +101,31 @@ func Migrate(db *sql.DB) error {
 			client_ip TEXT NOT NULL DEFAULT '',
 			gateway_api_key_name TEXT NOT NULL DEFAULT ''
 		)`,
+		`CREATE TABLE IF NOT EXISTS stats_counters (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			dimension TEXT NOT NULL,
+			bucket TEXT NOT NULL,
+			request_count INTEGER NOT NULL DEFAULT 0,
+			success_count INTEGER NOT NULL DEFAULT 0,
+			error_count INTEGER NOT NULL DEFAULT 0,
+			input_tokens INTEGER NOT NULL DEFAULT 0,
+			output_tokens INTEGER NOT NULL DEFAULT 0,
+			cached_tokens INTEGER NOT NULL DEFAULT 0,
+			cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+			total_tokens INTEGER NOT NULL DEFAULT 0,
+			duration_sum_ms INTEGER NOT NULL DEFAULT 0,
+			ttft_sum_ms INTEGER NOT NULL DEFAULT 0,
+			perf_output_tokens INTEGER NOT NULL DEFAULT 0,
+			perf_proc_ms INTEGER NOT NULL DEFAULT 0,
+			perf_ttft_sum_ms INTEGER NOT NULL DEFAULT 0,
+			perf_n INTEGER NOT NULL DEFAULT 0,
+			UNIQUE(dimension, bucket)
+		)`,
+		`CREATE TABLE IF NOT EXISTS stats_series (
+			bucket TEXT PRIMARY KEY,
+			request_count INTEGER NOT NULL DEFAULT 0,
+			total_tokens INTEGER NOT NULL DEFAULT 0
+		)`,
 	}
 
 	for _, stmt := range statements {
@@ -120,6 +145,7 @@ func Migrate(db *sql.DB) error {
 		`CREATE INDEX IF NOT EXISTS idx_request_logs_provider_name ON request_logs(provider_name)`,
 		`CREATE INDEX IF NOT EXISTS idx_model_aliases_alias ON model_aliases(alias)`,
 		`CREATE INDEX IF NOT EXISTS idx_provider_models_provider_id ON provider_models(provider_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_stats_counters_bucket ON stats_counters(bucket)`,
 	}
 	for _, stmt := range indexStatements {
 		if _, err := db.Exec(stmt); err != nil {
@@ -137,6 +163,16 @@ func Migrate(db *sql.DB) error {
 
 	if err := runDataMigrations(db); err != nil {
 		return fmt.Errorf("data migration: %w", err)
+	}
+
+	if err := runDataMigrationOnceDirect(db, "data_migration_backfill_stats_counters_v1", func() error {
+		return backfillStatsCounters(db)
+	}); err != nil {
+		return fmt.Errorf("backfill stats counters: %w", err)
+	}
+
+	if err := ensureDefaultSettings(db); err != nil {
+		return fmt.Errorf("ensure default settings: %w", err)
 	}
 
 	// Reap any "pending" rows left over from a previous run that never got to
@@ -302,4 +338,84 @@ func runMigrationOnce(db *sql.DB, key string, exec func(tx *sql.Tx) error) error
 	}
 
 	return tx.Commit()
+}
+
+// runDataMigrationOnceDirect runs fn exactly once per database, recording a
+// flag in app_settings so it is not re-executed. Unlike runMigrationOnce it
+// does not wrap fn in its own transaction (the caller manages any transaction).
+func runDataMigrationOnceDirect(db *sql.DB, key string, fn func() error) error {
+	var existing string
+	err := db.QueryRow(`SELECT value FROM app_settings WHERE key = ?`, key).Scan(&existing)
+	if err == nil {
+		return nil
+	}
+	if err != sql.ErrNoRows {
+		return fmt.Errorf("check migration flag %s: %w", key, err)
+	}
+	if err := fn(); err != nil {
+		return fmt.Errorf("migration %s: %w", key, err)
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	_, err = db.Exec(`INSERT INTO app_settings (key, value, updated_at) VALUES (?, ?, ?)`, key, now, now)
+	return err
+}
+
+// backfillStatsCounters rebuilds the stats_counters and stats_series tables from
+// existing request_logs. Runs in batches so it does not hold large result sets in
+// memory and can resume after a crash (id > lastID ordering).
+func backfillStatsCounters(db *sql.DB) error {
+	const batchSize = 500
+	var lastID int64 = 0
+	for {
+		rows, err := db.Query(
+			`SELECT id, request_id, provider_name, provider_type, actual_model, stream, status,
+			        created_at, finished_at, time_to_first_token_ms, total_duration_ms,
+			        input_tokens, output_tokens, cached_tokens, cache_write_tokens, total_tokens
+			 FROM request_logs WHERE id > ? ORDER BY id LIMIT ?`, lastID, batchSize)
+		if err != nil {
+			return fmt.Errorf("query request_logs for backfill: %w", err)
+		}
+		count := 0
+		var streamInt int
+		for rows.Next() {
+			var log RequestLog
+			if err := rows.Scan(&log.ID, &log.RequestID, &log.ProviderName, &log.ProviderType,
+				&log.ActualModel, &streamInt, &log.Status, &log.CreatedAt,
+				&log.FinishedAt, &log.TimeToFirstTokenMs, &log.TotalDurationMs,
+				&log.InputTokens, &log.OutputTokens, &log.CachedTokens, &log.CacheWriteTokens, &log.TotalTokens); err != nil {
+				rows.Close()
+				return fmt.Errorf("scan request_log: %w", err)
+			}
+			log.Stream = streamInt != 0
+			if err := UpsertStatsCounters(db, &log); err != nil {
+				rows.Close()
+				return fmt.Errorf("upsert stats: %w", err)
+			}
+			lastID = log.ID
+			count++
+		}
+		rows.Close()
+		if count < batchSize {
+			break
+		}
+	}
+	return nil
+}
+
+// ensureDefaultSettings inserts default app_settings rows if they are missing.
+func ensureDefaultSettings(db *sql.DB) error {
+	defaults := []struct{ key, value string }{
+		{"stats.retention_days", "0"},
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	for _, d := range defaults {
+		_, err := db.Exec(
+			`INSERT OR IGNORE INTO app_settings (key, value, updated_at) VALUES (?, ?, ?)`,
+			d.key, d.value, now,
+		)
+		if err != nil {
+			return fmt.Errorf("insert default setting %s: %w", d.key, err)
+		}
+	}
+	return nil
 }
