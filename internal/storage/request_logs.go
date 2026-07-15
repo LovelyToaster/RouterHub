@@ -3,7 +3,9 @@ package storage
 import (
 	"database/sql"
 	"fmt"
+	"sort"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -220,32 +222,35 @@ func GetStatsSummary(db *sql.DB, p StatsParams) (*StatsSummary, error) {
 
 	// Distribution: requests + tokens per provider within current window
 	provRows, err := db.Query(`
-		SELECT provider_name, COUNT(*), COALESCE(SUM(total_tokens), 0)
-		FROM request_logs
-		WHERE created_at >= ? AND created_at < ?
-		GROUP BY provider_name
-	`, curStartStr, curEndStr)
+		SELECT dimension, SUM(request_count), COALESCE(SUM(total_tokens), 0)
+		FROM stats_counters
+		WHERE dimension LIKE 'provider:%'
+		  AND bucket >= ? AND bucket < ?
+		GROUP BY dimension
+	`, formatBucket(curStartStr), formatBucket(curEndStr))
 	if err != nil {
 		return nil, fmt.Errorf("distribution provider: %w", err)
 	}
 	for provRows.Next() {
-		var name string
+		var dim string
 		var count, tokens int64
-		if err := provRows.Scan(&name, &count, &tokens); err != nil {
+		if err := provRows.Scan(&dim, &count, &tokens); err != nil {
 			provRows.Close()
 			return nil, fmt.Errorf("scan distribution provider: %w", err)
 		}
+		name := strings.TrimPrefix(dim, "provider:")
 		s.RequestsByProvider[name] = count
 		s.TokensByProvider[name] = tokens
 	}
 	provRows.Close()
 
 	modelRows, err := db.Query(`
-		SELECT actual_model, COUNT(*), COALESCE(SUM(total_tokens), 0)
-		FROM request_logs
-		WHERE created_at >= ? AND created_at < ?
-		GROUP BY actual_model
-	`, curStartStr, curEndStr)
+		SELECT dimension, SUM(request_count), COALESCE(SUM(total_tokens), 0)
+		FROM stats_counters
+		WHERE dimension LIKE 'model:%'
+		  AND bucket >= ? AND bucket < ?
+		GROUP BY dimension
+	`, formatBucket(curStartStr), formatBucket(curEndStr))
 	if err != nil {
 		return nil, fmt.Errorf("distribution model: %w", err)
 	}
@@ -304,21 +309,36 @@ func GetStatsSummary(db *sql.DB, p StatsParams) (*StatsSummary, error) {
 	return s, nil
 }
 
+func formatBucket(rfc3339 string) string {
+	t, err := time.Parse(time.RFC3339, rfc3339)
+	if err != nil {
+		return rfc3339[:13]
+	}
+	return t.UTC().Truncate(time.Hour).Format("2006-01-02T15")
+}
+
 func scanWindow(db *sql.DB, start, end string, w *WindowStats) error {
+	startBucket := formatBucket(start)
+	endBucket := formatBucket(end)
 	return db.QueryRow(`
 		SELECT
-			COALESCE(COUNT(*), 0),
-			COALESCE(SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN status = 'error'   THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(request_count), 0),
+			COALESCE(SUM(success_count), 0),
+			COALESCE(SUM(error_count), 0),
 			COALESCE(SUM(total_tokens), 0),
 			COALESCE(SUM(input_tokens), 0),
 			COALESCE(SUM(output_tokens), 0),
 			COALESCE(SUM(cached_tokens), 0),
-			COALESCE(AVG(total_duration_ms), 0),
-			COALESCE(AVG(time_to_first_token_ms), 0)
-		FROM request_logs
-		WHERE created_at >= ? AND created_at < ?
-	`, start, end).Scan(
+			CASE WHEN SUM(request_count) > 0
+			     THEN CAST(SUM(duration_sum_ms) AS REAL) / SUM(request_count)
+			     ELSE 0 END,
+			CASE WHEN SUM(request_count) > 0
+			     THEN CAST(SUM(ttft_sum_ms) AS REAL) / SUM(request_count)
+			     ELSE 0 END
+		FROM stats_counters
+		WHERE dimension = 'global'
+		  AND bucket >= ? AND bucket < ?
+	`, startBucket, endBucket).Scan(
 		&w.Requests, &w.SuccessfulRequests, &w.FailedRequests,
 		&w.Tokens, &w.InputTokens, &w.OutputTokens, &w.CachedTokens,
 		&w.AvgDurationMs, &w.AvgTtftMs,
@@ -326,42 +346,69 @@ func scanWindow(db *sql.DB, start, end string, w *WindowStats) error {
 }
 
 func scanPerf(db *sql.DB, groupCol, start, end string) ([]ModelPerf, error) {
-	q := fmt.Sprintf(`
-		SELECT
-			%s AS name,
-			SUM(output_tokens) * 1000.0
-				/ NULLIF(SUM(total_duration_ms - COALESCE(time_to_first_token_ms, 0)), 0) AS tps,
-			AVG(time_to_first_token_ms) AS ttft,
-			COUNT(*) AS n
-		FROM request_logs
-		WHERE status = 'success'
-			AND output_tokens > 0
-			AND total_duration_ms > 0
-			AND (total_duration_ms - COALESCE(time_to_first_token_ms, 0)) > 0
-			AND created_at >= ? AND created_at < ?
-		GROUP BY %s
-		HAVING tps IS NOT NULL
-		ORDER BY tps DESC
-		LIMIT 5
-	`, groupCol, groupCol)
-	rows, err := db.Query(q, start, end)
+	var dimPrefix string
+	if groupCol == "actual_model" {
+		dimPrefix = "perf_model:"
+	} else {
+		dimPrefix = "perf_provider:"
+	}
+
+	type raw struct {
+		dim          string
+		outputTokens int64
+		procMs       int64
+		ttftSum      int64
+		n            int64
+	}
+
+	rows, err := db.Query(`
+		SELECT dimension,
+		       SUM(perf_output_tokens),
+		       SUM(perf_proc_ms),
+		       SUM(perf_ttft_sum_ms),
+		       SUM(perf_n)
+		FROM stats_counters
+		WHERE dimension LIKE ?
+		  AND bucket >= ? AND bucket < ?
+		  AND perf_n > 0
+		GROUP BY dimension
+	`, dimPrefix+"%", formatBucket(start), formatBucket(end))
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	out := make([]ModelPerf, 0, 5)
+
+	var raws []raw
 	for rows.Next() {
-		var mp ModelPerf
-		var ttft sql.NullFloat64
-		if err := rows.Scan(&mp.Model, &mp.TokensPerSecond, &ttft, &mp.SampleCount); err != nil {
+		var r raw
+		if err := rows.Scan(&r.dim, &r.outputTokens, &r.procMs, &r.ttftSum, &r.n); err != nil {
 			return nil, err
 		}
-		if ttft.Valid {
-			mp.AvgTtftMs = ttft.Float64
-		}
-		out = append(out, mp)
+		raws = append(raws, r)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	out := make([]ModelPerf, 0, len(raws))
+	for _, r := range raws {
+		if r.procMs <= 0 {
+			continue
+		}
+		tps := float64(r.outputTokens) * 1000.0 / float64(r.procMs)
+		avgTtft := float64(0)
+		if r.n > 0 {
+			avgTtft = float64(r.ttftSum) / float64(r.n)
+		}
+		name := strings.TrimPrefix(r.dim, dimPrefix)
+		out = append(out, ModelPerf{Model: name, TokensPerSecond: tps, AvgTtftMs: avgTtft, SampleCount: r.n})
+	}
+
+	sort.Slice(out, func(i, j int) bool { return out[i].TokensPerSecond > out[j].TokensPerSecond })
+	if len(out) > 5 {
+		out = out[:5]
+	}
+	return out, nil
 }
 
 func scanSeries(db *sql.DB, start, end string, buckets []Bucket, loc *time.Location) ([]DayCount, []DayCount, error) {
@@ -376,22 +423,23 @@ func scanSeries(db *sql.DB, start, end string, buckets []Bucket, loc *time.Locat
 	}
 
 	rows, err := db.Query(`
-		SELECT created_at, total_tokens
-		FROM request_logs
-		WHERE created_at >= ? AND created_at < ?
-	`, start, end)
+		SELECT bucket, request_count, total_tokens
+		FROM stats_series
+		WHERE bucket >= ? AND bucket < ?
+		ORDER BY bucket
+	`, formatBucket(start), formatBucket(end))
 	if err != nil {
 		return nil, nil, err
 	}
 	defer rows.Close()
 
 	for rows.Next() {
-		var createdAt string
-		var tokens int64
-		if err := rows.Scan(&createdAt, &tokens); err != nil {
+		var bucket string
+		var count, tokens int64
+		if err := rows.Scan(&bucket, &count, &tokens); err != nil {
 			return nil, nil, err
 		}
-		t, err := time.Parse(time.RFC3339, createdAt)
+		t, err := time.Parse("2006-01-02T15", bucket)
 		if err != nil {
 			continue
 		}
@@ -400,7 +448,7 @@ func scanSeries(db *sql.DB, start, end string, buckets []Bucket, loc *time.Locat
 		if idx < 0 {
 			continue
 		}
-		series[idx].Count++
+		series[idx].Count += count
 		tokenSeries[idx].Count += tokens
 	}
 	return series, tokenSeries, rows.Err()
@@ -418,18 +466,22 @@ func findBucket(buckets []Bucket, t time.Time) int {
 }
 
 func countActiveDays(db *sql.DB, start, end string, loc *time.Location) (int64, error) {
-	rows, err := db.Query(`SELECT created_at FROM request_logs WHERE created_at >= ? AND created_at < ?`, start, end)
+	rows, err := db.Query(`
+		SELECT bucket FROM stats_series
+		WHERE bucket >= ? AND bucket < ? AND request_count > 0
+	`, formatBucket(start), formatBucket(end))
 	if err != nil {
 		return 0, err
 	}
 	defer rows.Close()
+
 	dates := make(map[string]struct{})
 	for rows.Next() {
-		var createdAt string
-		if err := rows.Scan(&createdAt); err != nil {
+		var bucket string
+		if err := rows.Scan(&bucket); err != nil {
 			return 0, err
 		}
-		t, err := time.Parse(time.RFC3339, createdAt)
+		t, err := time.Parse("2006-01-02T15", bucket)
 		if err != nil {
 			continue
 		}
