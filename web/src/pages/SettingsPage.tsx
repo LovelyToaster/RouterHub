@@ -23,6 +23,7 @@ export function SettingsPage() {
   const [activeTab, setActiveTab] = useState<'general' | 'logs'>('general')
   const [bodyCapture, setBodyCapture] = useState<string>('error')
   const [retentionDays, setRetentionDays] = useState<string>('0')
+  const [statsRetentionDays, setStatsRetentionDays] = useState<string>('0')
   const [toast, setToast] = useState<{ type: 'success' | 'error'; msg: string } | null>(null)
 
   const { data: settings, isLoading } = useQuery({
@@ -65,6 +66,13 @@ export function SettingsPage() {
     }
   }, [settings])
 
+  useEffect(() => {
+    if (settings) {
+      const v = settings.find((s) => s.key === 'stats.retention_days')?.value
+      if (v !== undefined) setStatsRetentionDays(v)
+    }
+  }, [settings])
+
   const updateMut = useMutation({
     mutationFn: (data: Record<string, string>) => updateSettings(data),
     onSuccess: () => {
@@ -100,6 +108,12 @@ export function SettingsPage() {
     const n = Math.max(0, Math.floor(Number(retentionDays) || 0))
     setRetentionDays(String(n))
     saveSetting('log.request_log_retention_days', String(n))
+  }
+
+  const handleStatsRetentionBlur = () => {
+    const n = Math.max(0, Math.floor(Number(statsRetentionDays) || 0))
+    setStatsRetentionDays(String(n))
+    saveSetting('stats.retention_days', String(n))
   }
 
   // Build the dropdown options: ensure the currently effective tz is present.
@@ -275,6 +289,27 @@ export function SettingsPage() {
                   />
                   <p className="text-xs text-text-muted">
                     {t('settings.requestLogRetentionDescription')}
+                  </p>
+                </div>
+              </GlassCard>
+
+              {/* Stats retention */}
+              <GlassCard>
+                <GlassCardHeader
+                  title={t('settings.statsRetention')}
+                  description={t('settings.statsRetentionDescription')}
+                />
+                <div className="p-6 max-w-sm space-y-2">
+                  <Input
+                    label={t('settings.statsRetention')}
+                    type="number"
+                    min={0}
+                    value={statsRetentionDays}
+                    onChange={(e) => setStatsRetentionDays(e.target.value)}
+                    onBlur={handleStatsRetentionBlur}
+                  />
+                  <p className="text-xs text-text-muted">
+                    {t('settings.statsRetentionDescription')}
                   </p>
                 </div>
               </GlassCard>

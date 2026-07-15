@@ -52,6 +52,8 @@ const zhCN = {
       never: '从不',
       saved: '设置已保存',
       saveFailed: '保存失败',
+      statsRetention: '统计保留天数',
+      statsRetentionDescription: '超过该天数的统计分桶数据将被自动删除；设为 0 则不删除',
     },
     appearance: {
       language: '语言',

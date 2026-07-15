@@ -54,6 +54,9 @@ const enUS = {
       never: 'Never',
       saved: 'Settings saved',
       saveFailed: 'Save failed',
+      statsRetention: 'Stats retention (days)',
+      statsRetentionDescription:
+        'Stats bucket data older than this is auto-deleted; 0 disables deletion',
     },
     appearance: {
       language: 'Language',
