@@ -7,14 +7,14 @@ import (
 )
 
 func UpsertStatsCounters(db *sql.DB, log *RequestLog) error {
-	if log.FinishedAt == nil {
+	if log.CreatedAt == "" {
 		return nil
 	}
-	finished, err := time.Parse(time.RFC3339, *log.FinishedAt)
+	created, err := time.Parse(time.RFC3339, log.CreatedAt)
 	if err != nil {
-		return fmt.Errorf("parse finished_at: %w", err)
+		return fmt.Errorf("parse created_at: %w", err)
 	}
-	bucket := finished.UTC().Truncate(time.Hour).Format("2006-01-02T15")
+	bucket := created.UTC().Truncate(time.Hour).Format("2006-01-02T15")
 
 	tx, err := db.Begin()
 	if err != nil {

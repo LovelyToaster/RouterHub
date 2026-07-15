@@ -364,6 +364,14 @@ func runDataMigrationOnceDirect(db *sql.DB, key string, fn func() error) error {
 // existing request_logs. Runs in batches so it does not hold large result sets in
 // memory and can resume after a crash (id > lastID ordering).
 func backfillStatsCounters(db *sql.DB) error {
+	// Clear any partially backfilled data to make re-runs idempotent.
+	if _, err := db.Exec(`DELETE FROM stats_counters`); err != nil {
+		return fmt.Errorf("clear stats_counters before backfill: %w", err)
+	}
+	if _, err := db.Exec(`DELETE FROM stats_series`); err != nil {
+		return fmt.Errorf("clear stats_series before backfill: %w", err)
+	}
+
 	const batchSize = 500
 	var lastID int64 = 0
 	for {

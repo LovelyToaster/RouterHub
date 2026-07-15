@@ -312,7 +312,10 @@ func GetStatsSummary(db *sql.DB, p StatsParams) (*StatsSummary, error) {
 func formatBucket(rfc3339 string) string {
 	t, err := time.Parse(time.RFC3339, rfc3339)
 	if err != nil {
-		return rfc3339[:13]
+		if len(rfc3339) >= 13 {
+			return rfc3339[:13]
+		}
+		return rfc3339
 	}
 	return t.UTC().Truncate(time.Hour).Format("2006-01-02T15")
 }
