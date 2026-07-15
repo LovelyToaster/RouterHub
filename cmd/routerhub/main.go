@@ -38,6 +38,7 @@ func main() {
 	// Start the background worker that periodically purges old request logs
 	// according to the log.request_log_retention_days setting (default 0 = off).
 	go storage.StartRetentionWorker(db, time.Hour)
+	go storage.StartStatsRetentionWorker(db, time.Hour)
 
 	// Build server
 	srv := server.New(db, cfg)

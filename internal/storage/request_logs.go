@@ -537,3 +537,49 @@ func runRetention(db *sql.DB) {
 		fmt.Printf("retention cleanup removed %d request logs older than %d days\n", n, days)
 	}
 }
+
+// DeleteOldStats deletes stats buckets older than the cutoff (in hours),
+// determined by days. Returns total rows deleted from both stats tables.
+func DeleteOldStats(db *sql.DB, days int) (int64, error) {
+	cutoff := time.Now().UTC().AddDate(0, 0, -days).Truncate(time.Hour).Format("2006-01-02T15")
+	res1, err := db.Exec(`DELETE FROM stats_counters WHERE bucket < ?`, cutoff)
+	if err != nil {
+		return 0, fmt.Errorf("delete old stats counters: %w", err)
+	}
+	n1, _ := res1.RowsAffected()
+	res2, err := db.Exec(`DELETE FROM stats_series WHERE bucket < ?`, cutoff)
+	if err != nil {
+		return 0, fmt.Errorf("delete old stats series: %w", err)
+	}
+	n2, _ := res2.RowsAffected()
+	return n1 + n2, nil
+}
+
+// StartStatsRetentionWorker periodically cleans up stats data older than the
+// configured stats.retention_days setting. interval is typically time.Hour.
+func StartStatsRetentionWorker(db *sql.DB, interval time.Duration) {
+	runStatsRetention(db)
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for range ticker.C {
+		runStatsRetention(db)
+	}
+}
+
+func runStatsRetention(db *sql.DB) {
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Printf("stats retention worker panic: %v\n", r)
+		}
+	}()
+	v := GetAppSettingString(db, "stats.retention_days", "0")
+	days, err := strconv.Atoi(v)
+	if err != nil || days <= 0 {
+		return
+	}
+	if n, err := DeleteOldStats(db, days); err != nil {
+		fmt.Printf("stats retention cleanup error: %v\n", err)
+	} else if n > 0 {
+		fmt.Printf("stats retention cleanup removed %d bucket rows older than %d days\n", n, days)
+	}
+}
