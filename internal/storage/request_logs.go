@@ -255,12 +255,13 @@ func GetStatsSummary(db *sql.DB, p StatsParams) (*StatsSummary, error) {
 		return nil, fmt.Errorf("distribution model: %w", err)
 	}
 	for modelRows.Next() {
-		var name string
+		var dim string
 		var count, tokens int64
-		if err := modelRows.Scan(&name, &count, &tokens); err != nil {
+		if err := modelRows.Scan(&dim, &count, &tokens); err != nil {
 			modelRows.Close()
 			return nil, fmt.Errorf("scan distribution model: %w", err)
 		}
+		name := strings.TrimPrefix(dim, "model:")
 		s.RequestsByModel[name] = count
 		s.TokensByModel[name] = tokens
 	}
