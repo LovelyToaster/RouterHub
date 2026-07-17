@@ -3,6 +3,7 @@ package gateway
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -160,6 +161,7 @@ func ProxyRequest(w http.ResponseWriter, r *http.Request, selected *SelectedProv
 			logEntry.Status = "error"
 			errMsg := readErr.Error()
 			logEntry.ErrorMessage = &errMsg
+			captureBodies(logEntry, bodyCapture, modifiedBody, nil)
 			_, _ = w.Write([]byte(fmt.Sprintf(`{"error":"failed to read upstream response: %v"}`, readErr)))
 			return
 		}
@@ -205,12 +207,14 @@ func handleSameProtocolStream(w http.ResponseWriter, resp *http.Response, inboun
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 
 	var lastUsage *convert.StreamUsage
+	clientWriteErr := false
 
 	for scanner.Scan() {
 		line := scanner.Text()
 
 		// Forward the line as-is
 		if _, err := fmt.Fprintf(w, "%s\n", line); err != nil {
+			clientWriteErr = true
 			break
 		}
 		if canFlush {
@@ -237,6 +241,13 @@ func handleSameProtocolStream(w http.ResponseWriter, resp *http.Response, inboun
 	if err := scanner.Err(); err != nil {
 		logEntry.Status = "error"
 		errMsg := fmt.Sprintf("stream read error: %v", err)
+		logEntry.ErrorMessage = &errMsg
+	} else if clientWriteErr {
+		// The upstream stream was fine but we could not deliver it to the
+		// client (e.g. the client disconnected mid-stream). The response is
+		// incomplete, so count it as a failure rather than a success.
+		logEntry.Status = "error"
+		errMsg := "client write failed: stream aborted before completion"
 		logEntry.ErrorMessage = &errMsg
 	} else {
 		logEntry.Status = "success"
@@ -374,7 +385,7 @@ func ConvertedProxyRequest(w http.ResponseWriter, r *http.Request, selected *Sel
 		if inboundProtocol == protocol.ProtocolChatCompletions {
 			chatIncludeUsage = extractChatIncludeUsage(bodyBytes)
 		}
-		handleConvertedStream(w, resp, inboundProtocol, selected.Provider.Type, logEntry, startTime, convertedBody, bodyCapture, chatIncludeUsage)
+		handleConvertedStream(w, r.Context(), resp, inboundProtocol, selected.Provider.Type, logEntry, startTime, convertedBody, bodyCapture, chatIncludeUsage)
 	} else {
 		// Non-streaming: read full body, convert response
 		respBody, readErr := io.ReadAll(resp.Body)
@@ -433,7 +444,7 @@ func ConvertedProxyRequest(w http.ResponseWriter, r *http.Request, selected *Sel
 // handleConvertedStream handles streaming response with cross-protocol conversion.
 // It uses a state machine (streamState) to generate proper SSE events with
 // lifecycle events, tool-call fragment accumulation, and stream termination.
-func handleConvertedStream(w http.ResponseWriter, resp *http.Response, inboundProtocol, providerType string, logEntry *storage.RequestLog, startTime time.Time, reqBody []byte, bodyCapture string, chatIncludeUsage bool) {
+func handleConvertedStream(w http.ResponseWriter, ctx context.Context, resp *http.Response, inboundProtocol, providerType string, logEntry *storage.RequestLog, startTime time.Time, reqBody []byte, bodyCapture string, chatIncludeUsage bool) {
 	if resp.StatusCode >= 400 {
 		// For error responses, copy original headers (filtering hop-by-hop)
 		// and forward the body as-is, preserving the original Content-Type.
@@ -514,6 +525,12 @@ func handleConvertedStream(w http.ResponseWriter, resp *http.Response, inboundPr
 	if err := scanner.Err(); err != nil {
 		logEntry.Status = "error"
 		errMsg := fmt.Sprintf("stream read error: %v", err)
+		logEntry.ErrorMessage = &errMsg
+	} else if ctx.Err() != nil {
+		// The client disconnected before the upstream stream finished; the
+		// delivered response is incomplete, so count it as a failure.
+		logEntry.Status = "error"
+		errMsg := "client disconnected: stream aborted before completion"
 		logEntry.ErrorMessage = &errMsg
 	} else if logEntry.Status != "error" {
 		logEntry.Status = "success"

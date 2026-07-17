@@ -186,6 +186,7 @@ const enUS = {
       overview: 'Overview',
       status: 'Status',
       httpStatus: 'HTTP status',
+      statusErrorHttpHint: 'HTTP status {code} only means the upstream responded; this request failed during transfer or conversion and is counted as a failure.',
       reason: 'Reason',
       tokens: 'Tokens',
       inputTokens: 'Input',

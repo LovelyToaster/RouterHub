@@ -103,7 +103,19 @@ export default function RequestLogDetailModal({
             {t('requests.overview')}
           </h4>
           <div className="space-y-1 text-sm">
-            <MetaRow label={t('requests.status')} value={<StatusBadge status={log.status} />} />
+            <MetaRow
+              label={t('requests.status')}
+              value={
+                <div className="flex flex-col items-end gap-1">
+                  <StatusBadge status={log.status} />
+                  {log.status === 'error' && log.http_status != null && log.http_status < 400 && (
+                    <span className="text-xs text-text-secondary max-w-[18rem] text-right leading-snug">
+                      {t('requests.statusErrorHttpHint', { code: log.http_status })}
+                    </span>
+                  )}
+                </div>
+              }
+            />
             <MetaRow
               label={t('requests.httpStatus')}
               value={log.http_status != null ? String(log.http_status) : undefined}

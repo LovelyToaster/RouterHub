@@ -183,6 +183,7 @@ const zhCN = {
       overview: '概览',
       status: '状态',
       httpStatus: 'HTTP 状态码',
+      statusErrorHttpHint: 'HTTP 状态码 {code} 仅表示上游已发出响应；本次请求在传输或转换中失败，已计入失败次数。',
       reason: '原因',
       tokens: '词元',
       inputTokens: '输入',

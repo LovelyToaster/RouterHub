@@ -43,13 +43,52 @@ func UpdateRequestLog(db *sql.DB, log *RequestLog) error {
 // MarkPendingLogsAsError transitions any leftover "pending" rows to "error".
 // Called during startup so that logs abandoned by an interrupted process
 // (crash, forced shutdown) do not stay stuck on "processing" forever.
+// It also reconciles the stats counters for those rows: pending rows never had
+// a counter upsert (only finalized requests do), so without this the dashboard
+// would show them as errors in the log list but never count them as failures.
 func MarkPendingLogsAsError(db *sql.DB, message string) error {
 	now := Now()
-	_, err := db.Exec(
+
+	// Collect pending rows first so we can reconcile their stats counters.
+	type pendingRow struct {
+		provider string
+		model    string
+		created  string
+	}
+	rows, qerr := db.Query(`SELECT provider_name, actual_model, created_at FROM request_logs WHERE status='pending'`)
+	if qerr == nil {
+		var pendings []pendingRow
+		for rows.Next() {
+			var p pendingRow
+			if err := rows.Scan(&p.provider, &p.model, &p.created); err == nil {
+				pendings = append(pendings, p)
+			}
+		}
+		rows.Close()
+
+		if _, err := db.Exec(
+			`UPDATE request_logs SET status='error', error_message=?, finished_at=COALESCE(finished_at, ?) WHERE status='pending'`,
+			message, now,
+		); err != nil {
+			return fmt.Errorf("mark pending request logs as error: %w", err)
+		}
+
+		for _, p := range pendings {
+			_ = UpsertStatsCounters(db, &RequestLog{
+				ProviderName: p.provider,
+				ActualModel:  p.model,
+				CreatedAt:    p.created,
+				Status:       "error",
+			})
+		}
+		return nil
+	}
+
+	// Fallback: if the select failed, still transition the rows.
+	if _, err := db.Exec(
 		`UPDATE request_logs SET status='error', error_message=?, finished_at=COALESCE(finished_at, ?) WHERE status='pending'`,
 		message, now,
-	)
-	if err != nil {
+	); err != nil {
 		return fmt.Errorf("mark pending request logs as error: %w", err)
 	}
 	return nil
