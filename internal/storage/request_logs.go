@@ -201,11 +201,17 @@ func GetStatsSummary(db *sql.DB, p StatsParams) (*StatsSummary, error) {
 
 	curStartStr := p.CurStart.UTC().Format(time.RFC3339)
 	curEndStr := p.CurEnd.UTC().Format(time.RFC3339)
+	// stats_counters buckets are hourly (truncated to the hour in UTC). The
+	// window end is exclusive, so using curEnd (which falls inside the current
+	// hour) would exclude the entire current hour. Push the upper bound to the
+	// next hour so the current (partial) hour is included. The previous
+	// window keeps its boundary-exclusive end unchanged.
+	curEndExclusiveStr := p.CurEnd.Add(time.Hour).UTC().Format(time.RFC3339)
 	s.Current.Start = curStartStr
 	s.Current.End = curEndStr
 
 	// Current window aggregates
-	if err := scanWindow(db, curStartStr, curEndStr, &s.Current); err != nil {
+	if err := scanWindow(db, curStartStr, curEndExclusiveStr, &s.Current); err != nil {
 		return nil, fmt.Errorf("current window: %w", err)
 	}
 
@@ -225,9 +231,9 @@ func GetStatsSummary(db *sql.DB, p StatsParams) (*StatsSummary, error) {
 		SELECT dimension, SUM(request_count), COALESCE(SUM(total_tokens), 0)
 		FROM stats_counters
 		WHERE dimension LIKE 'provider:%'
-		  AND bucket >= ? AND bucket < ?
+		AND bucket >= ? AND bucket < ?
 		GROUP BY dimension
-	`, formatBucket(curStartStr), formatBucket(curEndStr))
+	`, formatBucket(curStartStr), formatBucket(curEndExclusiveStr))
 	if err != nil {
 		return nil, fmt.Errorf("distribution provider: %w", err)
 	}
@@ -248,9 +254,9 @@ func GetStatsSummary(db *sql.DB, p StatsParams) (*StatsSummary, error) {
 		SELECT dimension, SUM(request_count), COALESCE(SUM(total_tokens), 0)
 		FROM stats_counters
 		WHERE dimension LIKE 'model:%'
-		  AND bucket >= ? AND bucket < ?
+		AND bucket >= ? AND bucket < ?
 		GROUP BY dimension
-	`, formatBucket(curStartStr), formatBucket(curEndStr))
+	`, formatBucket(curStartStr), formatBucket(curEndExclusiveStr))
 	if err != nil {
 		return nil, fmt.Errorf("distribution model: %w", err)
 	}
@@ -268,13 +274,13 @@ func GetStatsSummary(db *sql.DB, p StatsParams) (*StatsSummary, error) {
 	modelRows.Close()
 
 	// Performance TOP 5 (model + provider) within current window
-	mp, err := scanPerf(db, "actual_model", curStartStr, curEndStr)
+	mp, err := scanPerf(db, "actual_model", curStartStr, curEndExclusiveStr)
 	if err != nil {
 		return nil, fmt.Errorf("model performance: %w", err)
 	}
 	s.ModelPerformance = mp
 
-	pp, err := scanPerf(db, "provider_name", curStartStr, curEndStr)
+	pp, err := scanPerf(db, "provider_name", curStartStr, curEndExclusiveStr)
 	if err != nil {
 		return nil, fmt.Errorf("provider performance: %w", err)
 	}
@@ -301,7 +307,7 @@ func GetStatsSummary(db *sql.DB, p StatsParams) (*StatsSummary, error) {
 
 	// Active days (used for all-time daily average). Compute using loc: for each log,
 	// convert created_at to loc and count distinct local dates. Data volume is small.
-	activeDays, err := countActiveDays(db, curStartStr, curEndStr, p.Loc)
+	activeDays, err := countActiveDays(db, curStartStr, curEndExclusiveStr, p.Loc)
 	if err != nil {
 		return nil, fmt.Errorf("active days: %w", err)
 	}
