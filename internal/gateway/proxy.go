@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -31,8 +32,28 @@ var hopByHopHeaders = map[string]bool{
 	"Upgrade":             true,
 }
 
-// shared HTTP client with reasonable timeout, reused across requests
-var sharedClient = &http.Client{Timeout: 5 * time.Minute}
+// shared HTTP client reused across requests. It deliberately has no overall
+// Client.Timeout: that field also caps response-body reading, which would
+// truncate long streaming responses (and lose the trailing usage chunk) and
+// abort long "thinking" phases even though the upstream is still generating.
+// Instead we bound only the connection-establishment / response-header phases
+// at the Transport level and let the request context (r.Context()) govern the
+// overall lifetime of streaming bodies.
+var sharedClient = &http.Client{
+	Transport: &http.Transport{
+		Proxy: http.ProxyFromEnvironment,
+		DialContext: (&net.Dialer{
+			Timeout:   30 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          100,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+		ResponseHeaderTimeout: 5 * time.Minute,
+	},
+}
 
 // ProxyRequest forwards the request to the provider and returns the response.
 // It handles header forwarding, auth header setting, and model replacement.
