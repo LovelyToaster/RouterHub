@@ -747,7 +747,7 @@ func (h *AdminHandler) buildStatsParams(r *http.Request) storage.StatsParams {
 	now := time.Now()
 	w := ComputeWindow(now, loc, rk)
 	if rk == RangeAll {
-		if earliest, err := storage.EarliestRequestLogTime(h.DB); err == nil {
+		if earliest, err := storage.EarliestStatsBucketTime(h.DB); err == nil {
 			w = AdjustAllWindowForSeries(w, earliest, now)
 		}
 	}

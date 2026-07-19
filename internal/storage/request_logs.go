@@ -127,6 +127,26 @@ func ListRequestLogs(db *sql.DB, filter RequestLogFilter) ([]RequestLog, error) 
 	return logs, rows.Err()
 }
 
+// EarliestStatsBucketTime returns the earliest stats bucket from stats_series.
+// The dashboard's "all" range series must be bounded by the stats tables
+// themselves (not request_logs, which has an independent retention policy), so
+// the trend chart and the summary numbers stay consistent when the two
+// retention windows differ. Returns a zero time when there is no stats data.
+func EarliestStatsBucketTime(db *sql.DB) (time.Time, error) {
+	var s sql.NullString
+	if err := db.QueryRow(`SELECT MIN(bucket) FROM stats_series`).Scan(&s); err != nil {
+		return time.Time{}, fmt.Errorf("earliest stats bucket: %w", err)
+	}
+	if !s.Valid || s.String == "" {
+		return time.Time{}, nil
+	}
+	t, err := time.Parse("2006-01-02T15", s.String)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("parse earliest stats bucket: %w", err)
+	}
+	return t, nil
+}
+
 // EarliestRequestLogTime returns the earliest created_at across all logs (UTC).
 // Returns zero time when there are no logs.
 func EarliestRequestLogTime(db *sql.DB) (time.Time, error) {
