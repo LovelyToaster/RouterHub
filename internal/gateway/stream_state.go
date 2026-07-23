@@ -61,7 +61,10 @@ type streamState struct {
 	// instead of a zero placeholder.
 	preludeInputTokens int64
 
-	// Anthropic pending finish reason (stored from message_delta, used at message_stop).
+	// Deferred finish reason. Used when writeClosure must be delayed:
+	//   Chat upstream:  finish_reason arrived but usage chunk hasn't yet.
+	//   Anthropic upstream: message_delta arrived but message_stop hasn't yet.
+	// writeStreamEnd uses it as the final fallback reason.
 	pendingFinishReason string
 
 	// Reasoning/Thinking block lifecycle.
@@ -153,7 +156,11 @@ func (s *streamState) processUpstreamData(w http.ResponseWriter, flusher http.Fl
 // exactly once. Idempotent.
 func (s *streamState) writeStreamEnd(w http.ResponseWriter, flusher http.Flusher) {
 	if !s.closureSent {
-		s.writeClosure(w, flusher, "stop")
+		reason := s.pendingFinishReason
+		if reason == "" {
+			reason = "stop"
+		}
+		s.writeClosure(w, flusher, reason)
 	}
 	s.writeChatDone(w, flusher)
 }
@@ -1028,6 +1035,12 @@ func (s *streamState) buildOutputItems(status string) []any {
 func (s *streamState) handleUpstreamChat(w http.ResponseWriter, flusher http.Flusher, event map[string]any) {
 	choices := getSlice(event, "choices")
 	if len(choices) == 0 {
+		// Usage-only chunk (stream_options.include_usage).  Usage was already
+		// parsed and stored in lastUsage by ParseStreamUsage before this call.
+		// If we previously deferred the closure waiting for usage, fire it now.
+		if s.pendingFinishReason != "" && !s.closureSent {
+			s.writeClosure(w, flusher, s.pendingFinishReason)
+		}
 		return
 	}
 	choice, ok := choices[0].(map[string]any)
@@ -1083,7 +1096,14 @@ func (s *streamState) handleUpstreamChat(w http.ResponseWriter, flusher http.Flu
 
 	// Finish reason.
 	if finishReason != "" {
-		s.writeClosure(w, flusher, finishReason)
+		if s.lastUsage != nil {
+			// Usage already captured (same chunk or earlier) — emit closure now.
+			s.writeClosure(w, flusher, finishReason)
+		} else {
+			// Usage hasn't arrived yet — defer closure until the usage-only
+			// chunk shows up (or the stream ends, via writeStreamEnd).
+			s.pendingFinishReason = finishReason
+		}
 	}
 }
 
